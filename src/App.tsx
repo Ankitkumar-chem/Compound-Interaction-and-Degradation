@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, FormEvent } from "react";
+import { useState, FormEvent, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Beaker, 
@@ -13,7 +13,10 @@ import {
   ShieldAlert,
   RefreshCw,
   Download,
-  Microscope
+  Microscope,
+  Info,
+  Database,
+  History
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -23,11 +26,15 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { predictInteraction, PredictionResult, InputType, CompoundInput, AnalysisError } from "@/src/lib/gemini";
+import { predictInteraction, PredictionResult, InputType, CompoundInput, AnalysisError, PredictionMethod } from "@/src/lib/gemini";
 import { ChemicalStructure } from "@/src/components/ChemicalStructure";
 import { Plus, Trash2, AlertCircle, WifiOff } from "lucide-react";
 import { useRef } from "react";
 import * as XLSX from "xlsx";
+import { db, auth } from "@/src/lib/firebase";
+import { collection, addDoc, setDoc, doc, serverTimestamp, getDocs, query, orderBy, limit, where } from "firebase/firestore";
+import { signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { seedDatabase } from "@/src/lib/seed";
 
 import { 
   Tooltip,
@@ -44,6 +51,60 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<{ message: string; type: string } | null>(null);
+  const [selectedMethods, setSelectedMethods] = useState<Set<"Heuristic" | "Boltzmann">>(new Set(["Heuristic"]));
+  const [user, setUser] = useState<any>(null);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState<number | null>(null);
+  const [dbStats, setDbStats] = useState({ compounds: 0, predictions: 0 });
+
+  useEffect(() => {
+    // Initialize Firebase Seed and suggestions
+    const init = async () => {
+      try {
+        await seedDatabase();
+        
+        // Fetch Stats immediately after seeding to show updated counts
+        const compoundsSnap = await getDocs(collection(db, "compounds"));
+        const predictionsSnap = await getDocs(collection(db, "predictions"));
+        setDbStats({
+          compounds: compoundsSnap.size,
+          predictions: predictionsSnap.size
+        });
+      } catch (e) {
+        console.error("Firebase Init Error:", e);
+      }
+    };
+
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+    });
+
+    init();
+    return () => unsubscribe();
+  }, []);
+
+  const handleSuggestionSelect = (index: number, compound: any) => {
+    const newCompounds = [...compounds];
+    newCompounds[index] = { value: compound.name, type: "Name" };
+    setCompounds(newCompounds);
+    setShowSuggestions(null);
+  };
+
+  const toggleMethod = (method: "Heuristic" | "Boltzmann") => {
+    const newMethods = new Set(selectedMethods);
+    if (newMethods.has(method)) {
+      newMethods.delete(method);
+    } else {
+      newMethods.add(method);
+    }
+    setSelectedMethods(newMethods);
+  };
+
+  const predictionMethod: PredictionMethod = 
+    selectedMethods.size === 2 ? "Both" : 
+    selectedMethods.has("Boltzmann") ? "Boltzmann" : 
+    selectedMethods.has("Heuristic") ? "Heuristic" : 
+    "Heuristic"; // Fallback to Heuristic as "normal"
 
   const addCompound = () => {
     if (compounds.length < 5) {
@@ -73,8 +134,56 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const prediction = await predictInteraction(validInputs);
+      const prediction = await predictInteraction(validInputs, predictionMethod);
       setResult(prediction);
+
+      // Save prediction to Firebase
+      await addDoc(collection(db, "predictions"), {
+        inputs: validInputs,
+        result: prediction,
+        method: predictionMethod,
+        timestamp: serverTimestamp()
+      });
+
+      // Add new compounds to database if they don't exist
+      for (const comp of prediction.compounds) {
+        const hasName = comp.name && comp.name.toLowerCase() !== "unknown" && comp.name.trim() !== "";
+        const hasSmiles = comp.smiles && comp.smiles.trim() !== "";
+
+        if (!hasName && !hasSmiles) continue;
+
+        let exists = false;
+        if (hasName) {
+          const q = query(collection(db, "compounds"), where("name", "==", comp.name));
+          const snap = await getDocs(q);
+          if (!snap.empty) exists = true;
+        }
+
+        if (!exists && hasSmiles) {
+          const q2 = query(collection(db, "compounds"), where("smiles", "==", comp.smiles));
+          const snap2 = await getDocs(q2);
+          if (!snap2.empty) exists = true;
+        }
+        
+        if (!exists) {
+          const docId = (hasName ? comp.name : comp.smiles).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+          await setDoc(doc(db, "compounds", docId), {
+            name: hasName ? comp.name : "",
+            smiles: hasSmiles ? comp.smiles : "",
+            createdAt: new Date().toISOString()
+          });
+          console.log(`Added new compound to database: ${comp.name || comp.smiles}`);
+        }
+      }
+
+      // Refresh stats
+      const compoundsSnap = await getDocs(collection(db, "compounds"));
+      const predictionsSnap = await getDocs(collection(db, "predictions"));
+      setDbStats({
+        compounds: compoundsSnap.size,
+        predictions: predictionsSnap.size
+      });
+
     } catch (err: any) {
       console.error(err);
       if (err instanceof AnalysisError) {
@@ -120,19 +229,39 @@ export default function App() {
       // 2. Impurities Section
       if (result.degradationImpurities && result.degradationImpurities.length > 0) {
         rows.push(["PREDICTED DEGRADATION IMPURITIES"]);
-        rows.push(["IUPAC Name", "SMILES", "Probability (%)", "Origin", "Condition", "Source", "Description"]);
+        const hasEnergy = result.degradationImpurities.some(i => i.relativeEnergy !== undefined);
+        const hasBoth = result.degradationImpurities.some(i => i.probabilityHeuristic !== undefined);
+        
+        const header = ["IUPAC Name", "SMILES", "Main Probability (%)"];
+        if (hasBoth) {
+          header.push("Heuristic (%)", "Boltzmann (%)");
+        }
+        if (hasEnergy) header.push("Relative Energy (kcal/mol)");
+        header.push("Origin", "Condition", "Source", "Description");
+        rows.push(header);
+
         [...result.degradationImpurities]
           .sort((a, b) => b.probability - a.probability)
           .forEach(i => {
-            rows.push([
+            const row = [
               i.iupacName,
               i.smiles,
-              (i.probability * 100).toFixed(1),
+              (i.probability * 100).toFixed(1)
+            ];
+            if (hasBoth) {
+              row.push(
+                i.probabilityHeuristic ? (i.probabilityHeuristic * 100).toFixed(1) : "N/A",
+                i.probabilityBoltzmann ? (i.probabilityBoltzmann * 100).toFixed(1) : "N/A"
+              );
+            }
+            if (hasEnergy) row.push(i.relativeEnergy?.toFixed(2) || "N/A");
+            row.push(
               i.origin,
               i.condition,
               i.source,
               i.structureDescription
-            ]);
+            );
+            rows.push(row);
           });
         rows.push([]);
       }
@@ -189,6 +318,17 @@ export default function App() {
             <h1 className="text-xl font-bold tracking-tight font-serif">A-Pi1</h1>
           </div>
           <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-slate-50 rounded-full border border-slate-100">
+              <div className="flex items-center gap-1.5">
+                <Database className="w-3 h-3 text-indigo-500" />
+                <span className="text-[10px] font-medium text-slate-500">{dbStats.compounds} Compounds</span>
+              </div>
+              <Separator orientation="vertical" className="h-3 bg-slate-200" />
+              <div className="flex items-center gap-1.5">
+                <History className="w-3 h-3 text-emerald-500" />
+                <span className="text-[10px] font-medium text-slate-500">{dbStats.predictions} Predictions</span>
+              </div>
+            </div>
             <Badge variant="outline" className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
               v1.0.0-beta
             </Badge>
@@ -205,7 +345,7 @@ export default function App() {
               <CardDescription>Predict interactions and degradation pathways between compounds or analyze intrinsic stability.</CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handlePredict} className="space-y-6">
+              <form onSubmit={handlePredict} className="space-y-6" autoComplete="off">
                 <div className="space-y-6">
                   {/* Primary Compound Tile */}
                   <div className="space-y-3 p-4 bg-[#f5f7ff] rounded-xl border border-indigo-100 relative group">
@@ -223,14 +363,56 @@ export default function App() {
                         <TabsTrigger value="InChI" className="text-[9px]">InChI</TabsTrigger>
                       </TabsList>
                     </Tabs>
-                    <Input 
-                      id={`compound-0`} 
-                      placeholder={compounds[0].type === "Name" ? "e.g., Aspirin" : `Enter ${compounds[0].type}...`}
-                      value={compounds[0].value}
-                      onChange={(e) => updateCompound(0, "value", e.target.value)}
-                      required
-                      className="bg-white h-9 text-sm border-indigo-100 focus-visible:ring-indigo-500"
-                    />
+                    <div className="relative">
+                      <Input 
+                        id={`compound-0`} 
+                        placeholder={compounds[0].type === "Name" ? "e.g., Aspirin" : `Enter ${compounds[0].type}...`}
+                        value={compounds[0].value}
+                        autoComplete="off"
+                        onChange={async (e) => {
+                          const val = e.target.value;
+                          updateCompound(0, "value", val);
+                          
+                          if (compounds[0].type === "Name" && val.length > 1) {
+                            setShowSuggestions(0);
+                            // Intelligent suggestion based on database
+                            try {
+                              const q = query(
+                                collection(db, "compounds"), 
+                                where("name", ">=", val),
+                                where("name", "<=", val + "\uf8ff"),
+                                limit(5)
+                              );
+                              const snap = await getDocs(q);
+                              // Only update if this input is still the active one
+                              setSuggestions(snap.docs.map(d => d.data()));
+                            } catch (err) {
+                              console.error("Suggestion fetch error:", err);
+                            }
+                          } else {
+                            setShowSuggestions(null);
+                            setSuggestions([]);
+                          }
+                        }}
+                        required
+                        className="bg-white h-9 text-sm border-indigo-100 focus-visible:ring-indigo-500"
+                      />
+                      {showSuggestions === 0 && suggestions.length > 0 && (
+                        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden max-h-48 overflow-y-auto">
+                          {suggestions.map((s, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              className="w-full text-left px-4 py-2 text-xs hover:bg-indigo-50 border-b border-slate-50 last:border-0"
+                              onClick={() => handleSuggestionSelect(0, s)}
+                            >
+                              <div className="font-bold text-slate-700">{s.name}</div>
+                              <div className="text-[10px] text-slate-400 truncate">{s.smiles}</div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Secondary Compounds Tile */}
@@ -265,12 +447,52 @@ export default function App() {
                                 <TabsTrigger value="InChI" className="text-[8px]">InChI</TabsTrigger>
                               </TabsList>
                             </Tabs>
-                            <Input 
-                              placeholder={c.type === "Name" ? "e.g., Lactose" : `Enter ${c.type}...`}
-                              value={c.value}
-                              onChange={(e) => updateCompound(actualIndex, "value", e.target.value)}
-                              className="bg-white h-8 text-xs"
-                            />
+                            <div className="relative">
+                              <Input 
+                                placeholder={c.type === "Name" ? "e.g., Lactose" : `Enter ${c.type}...`}
+                                value={c.value}
+                                autoComplete="off"
+                                onChange={async (e) => {
+                                  const val = e.target.value;
+                                  updateCompound(actualIndex, "value", val);
+                                  
+                                  if (c.type === "Name" && val.length > 1) {
+                                    setShowSuggestions(actualIndex);
+                                    try {
+                                      const q = query(
+                                        collection(db, "compounds"), 
+                                        where("name", ">=", val),
+                                        where("name", "<=", val + "\uf8ff"),
+                                        limit(5)
+                                      );
+                                      const snap = await getDocs(q);
+                                      setSuggestions(snap.docs.map(d => d.data()));
+                                    } catch (err) {
+                                      console.error("Suggestion fetch error:", err);
+                                    }
+                                  } else {
+                                    setShowSuggestions(null);
+                                    setSuggestions([]);
+                                  }
+                                }}
+                                className="bg-white h-8 text-xs"
+                              />
+                              {showSuggestions === actualIndex && suggestions.length > 0 && (
+                                <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden max-h-48 overflow-y-auto">
+                                  {suggestions.map((s, i) => (
+                                    <button
+                                      key={i}
+                                      type="button"
+                                      className="w-full text-left px-4 py-2 text-xs hover:bg-indigo-50 border-b border-slate-50 last:border-0"
+                                      onClick={() => handleSuggestionSelect(actualIndex, s)}
+                                    >
+                                      <div className="font-bold text-slate-700">{s.name}</div>
+                                      <div className="text-[10px] text-slate-400 truncate">{s.smiles}</div>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -287,6 +509,66 @@ export default function App() {
                         Add Secondary Compound
                       </Button>
                     )}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Prediction Method</Label>
+                    <Tooltip>
+                      <TooltipTrigger className="text-slate-400 hover:text-indigo-500 transition-colors flex items-center justify-center">
+                        <Info className="w-3.5 h-3.5" />
+                      </TooltipTrigger>
+                        <TooltipContent className="max-w-xs p-3 bg-white border border-slate-200 shadow-xl rounded-xl">
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-indigo-900">Heuristic/AI</p>
+                            <p className="text-[10px] text-slate-600 leading-relaxed">Uses expert pharmaceutical reasoning and reaction kinetics to identify reactive sites and rank outcomes.</p>
+                            <div className="h-px bg-slate-100" />
+                            <p className="text-xs font-bold text-indigo-900">Boltzmann/Physics</p>
+                            <p className="text-[10px] text-slate-600 leading-relaxed">Uses thermodynamic stability principles and provides relative formation energy (ΔG) for each predicted impurity.</p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleMethod("Heuristic")}
+                      className={`flex-1 flex items-center gap-2.5 p-2.5 rounded-xl border transition-all text-left ${
+                        selectedMethods.has("Heuristic")
+                          ? "bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200"
+                          : "bg-white border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className={`shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center transition-colors ${
+                        selectedMethods.has("Heuristic") ? "bg-indigo-600 border-indigo-600" : "bg-white border-slate-300"
+                      }`}>
+                        {selectedMethods.has("Heuristic") && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                      </div>
+                      <div className="min-w-0">
+                        <div className={`text-xs font-bold truncate ${selectedMethods.has("Heuristic") ? "text-indigo-900" : "text-slate-700"}`}>Heuristic/AI</div>
+                        <div className="text-[9px] text-slate-500 truncate">Expert Reasoning</div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleMethod("Boltzmann")}
+                      className={`flex-1 flex items-center gap-2.5 p-2.5 rounded-xl border transition-all text-left ${
+                        selectedMethods.has("Boltzmann")
+                          ? "bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200"
+                          : "bg-white border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className={`shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center transition-colors ${
+                        selectedMethods.has("Boltzmann") ? "bg-indigo-600 border-indigo-600" : "bg-white border-slate-300"
+                      }`}>
+                        {selectedMethods.has("Boltzmann") && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
+                      </div>
+                      <div className="min-w-0">
+                        <div className={`text-xs font-bold truncate ${selectedMethods.has("Boltzmann") ? "text-indigo-900" : "text-slate-700"}`}>Boltzmann/Physics</div>
+                        <div className="text-[9px] text-slate-500 truncate">Thermodynamic (ΔG)</div>
+                      </div>
+                    </button>
                   </div>
                 </div>
 
@@ -438,20 +720,9 @@ export default function App() {
                           </div>
                           <div className="p-6 flex-1 flex flex-col justify-center space-y-3">
                             <div className="flex items-center gap-3">
-                              <Tooltip>
-                                <TooltipTrigger render={
-                                  <div className="font-serif text-2xl font-bold text-[#0f172a] leading-tight cursor-help hover:text-indigo-600 transition-colors">
-                                    {compound.name}
-                                  </div>
-                                } />
-                                <TooltipContent side="right" className="p-0 border-none bg-transparent shadow-none">
-                                  <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xl animate-in zoom-in-95 duration-200">
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-wider">Structure Preview</div>
-                                    <ChemicalStructure smiles={compound.smiles} width={200} height={200} />
-                                    <div className="mt-2 font-mono text-[9px] text-slate-400 max-w-[200px] break-all">{compound.smiles}</div>
-                                  </div>
-                                </TooltipContent>
-                              </Tooltip>
+                              <div className="font-serif text-2xl font-bold text-[#0f172a] leading-tight">
+                                {compound.name}
+                              </div>
                               <Badge variant="outline" className={`text-[10px] font-mono border-slate-100 ${idx === 0 ? 'text-[#4f46e5] bg-[#f5f7ff] border-indigo-100' : 'text-[#94a3b8]'}`}>
                                 {idx === 0 ? 'Primary Compound' : `Secondary Compound ${idx}`}
                               </Badge>
@@ -509,23 +780,22 @@ export default function App() {
                                 <div className="p-6 flex-1 space-y-4">
                                   <div className="flex justify-between items-start">
                                     <div className="space-y-1">
-                                      <Tooltip>
-                                        <TooltipTrigger render={
-                                          <div className="font-bold text-xl text-[#0f172a] cursor-help hover:text-indigo-600 transition-colors break-words">
-                                            {impurity.iupacName}
-                                          </div>
-                                        } />
-                                        <TooltipContent side="right" className="p-0 border-none bg-transparent shadow-none">
-                                          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xl animate-in zoom-in-95 duration-200">
-                                            <div className="text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-wider">Structure Preview</div>
-                                            <ChemicalStructure smiles={impurity.smiles} width={200} height={200} />
-                                            <div className="mt-2 font-mono text-[9px] text-slate-400 max-w-[200px] break-all">{impurity.smiles}</div>
-                                          </div>
-                                        </TooltipContent>
-                                      </Tooltip>
+                                      <div className="font-bold text-xl text-[#0f172a] break-words">
+                                        {impurity.iupacName}
+                                      </div>
                                     </div>
-                                    <div className="text-right">
+                                    <div className="text-right space-y-1">
                                       <div className="text-lg font-bold text-[#4f46e5]">{(impurity.probability * 100).toFixed(1)}%</div>
+                                      {impurity.probabilityHeuristic !== undefined && impurity.probabilityBoltzmann !== undefined && (
+                                        <div className="text-[9px] font-medium text-slate-400 uppercase tracking-tighter">
+                                          H: {(impurity.probabilityHeuristic * 100).toFixed(1)}% | B: {(impurity.probabilityBoltzmann * 100).toFixed(1)}%
+                                        </div>
+                                      )}
+                                      {impurity.relativeEnergy !== undefined && (
+                                        <div className="text-[10px] font-mono text-slate-400">
+                                          ΔG: {impurity.relativeEnergy.toFixed(2)} kcal/mol
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
                                   <div className="text-sm text-[#475569] leading-relaxed">{impurity.structureDescription}</div>

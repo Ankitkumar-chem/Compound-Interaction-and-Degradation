@@ -1,0 +1,359 @@
+import { db } from './firebase';
+import { collection, writeBatch, doc, getDocs, query, limit, deleteDoc } from 'firebase/firestore';
+
+const API_DATA: [string, string, string][] = [
+  ["Acetaminophen (Paracetamol)", "Analgesics & NSAIDs", "CC(=O)NC1=CC=C(O)C=C1"],
+  ["Ibuprofen", "Analgesics & NSAIDs", "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O"],
+  ["Naproxen", "Analgesics & NSAIDs", "CC(C1=CC2=C(C=C1)C=C(C=C2)OC)C(=O)O"],
+  ["Aspirin", "Analgesics & NSAIDs", "CC(=O)OC1=CC=CC=C1C(=O)O"],
+  ["Diclofenac", "Analgesics & NSAIDs", "C1=CC=C(C(=C1)CC(=O)O)NC2=C(C=CC=C2Cl)Cl"],
+  ["Celecoxib", "Analgesics & NSAIDs", "CC1=CC=C(C=C1)C2=CC(=NN2C3=CC=C(C=C3)S(N)(=O)=O)C(F)(F)F"],
+  ["Etoricoxib", "Analgesics & NSAIDs", "CC1=CN=C(C=C1C2=CC=C(C=C2)S(=O)(=O)C)C3=CC=C(C=N3)Cl"],
+  ["Ketoprofen", "Analgesics & NSAIDs", "CC(C1=CC=CC(=C1)C(=O)C2=CC=CC=C2)C(=O)O"],
+  ["Meloxicam", "Analgesics & NSAIDs", "CC1=C(C(=NS1(=O)=O)NC2=NC=CS2)O"],
+  ["Piroxicam", "Analgesics & NSAIDs", "CC1=NC=CC=C1NC(=O)C2=C(O)C3=CC=CC=C3S(=O)(=O)N2C"],
+  ["Indomethacin", "Analgesics & NSAIDs", "CC1=C(C2=C(N1C(=O)C3=CC=C(C=C3)Cl)C=CC(=C2)OC)CC(=O)O"],
+  ["Ketorolac", "Analgesics & NSAIDs", "C1CC2=C(C1)N(C=C2C(=O)C3=CC=CC=C3)C(=O)O"],
+  ["Morphine", "Analgesics & NSAIDs", "CN1CCC23C4C1CC5=C2C(=C(C=C5)O)OC3C(C=C4)O"],
+  ["Codeine", "Analgesics & NSAIDs", "CN1CCC23C4C1CC5=C2C(=C(C=C5)OC)OC3C(C=C4)O"],
+  ["Tramadol", "Analgesics & NSAIDs", "CN(C)CC1(CCCCC1OC2=CC=CC(=C2)OC)O"],
+  ["Oxycodone", "Analgesics & NSAIDs", "CN1CCC23C4C1CC5=C2C(=C(C=C5)OC)OC3(C(CC4)=O)O"],
+  ["Fentanyl", "Analgesics & NSAIDs", "CCC(=O)N(C1=CC=CC=C1)C2CCN(CC2)CCC3=CC=CC=C3"],
+  ["Lidocaine", "Anesthetics", "CCN(CC)CC(=O)NC1=C(C)C=CC=C1C"],
+  ["Bupivacaine", "Anesthetics", "CCCCN1CCCCC1C(=O)NC2=C(C)C=CC=C2C"],
+  ["Propofol", "Anesthetics", "CC(C)C1=C(C=CC=C1C(C)C)O"],
+  ["Ketamine", "Anesthetics", "CN1C(CCCC1=O)(C2=CC=CC=C2Cl)O"],
+  ["Amoxicillin", "Antibiotics", "CC1(C(N2C(S1)C(C2=O)NC(=O)C(C3=CC=C(C=C3)O)N)C(=O)O)C"],
+  ["Ciprofloxacin", "Antibiotics", "C1CC1N2C=C(C(=O)C3=CC(=C(C=C32)N4CCNCC4)F)C(=O)O"],
+  ["Azithromycin", "Antibiotics", "CCC1C(C(C(N(CC(CC(C(C(C(C(C(=O)O1)C)OC2CC(C(C(O2)C)O)(C)OC)C)OC3C(C(CC(O3)C)N(C)C)O)(C)O)C)C)C)O)(C)O"],
+  ["Doxorubicin", "Oncology", "CC1C(C(CC(O1)OC2CC(CC3=C(C4=C(C(=C23)O)C(=O)C5=C(C4=O)C=CC=C5OC)O)(C(=O)CO)O)N)O"],
+  ["Metformin", "Endocrine & Metabolic", "CN(C)C(=N)N=C(N)N"],
+  ["Omeprazole", "Gastroenterology", "CC1=CN=C(C(=C1OC)C)CS(=O)C2=NC3=C(N2)C=C(C=C3)OC"],
+  ["Salbutamol (Albuterol)", "Respiratory", "CC(C)(C)NCC(C1=CC(=C(C=C1)O)CO)O"],
+  ["Glucose", "Endocrine & Metabolic", "C(C(C(C(C(CO)O)O)O)O)=O"],
+  ["Lactose", "Endocrine & Metabolic", "C(C1C(C(C(C(O1)OC2C(OC(C(C2O)O)O)CO)O)O)O)O"],
+  ["Magnesium Stearate", "Excipient", "[Mg+2].[O-]C(=O)CCCCCCCCCCCCCCCCC.[O-]C(=O)CCCCCCCCCCCCCCCCC"]
+];
+
+// Adding the rest of the names from the user list without SMILES (placeholders)
+const ADDITIONAL_NAMES: [string, string][] = [
+  ["Naproxen", "Analgesics & NSAIDs"], ["Aspirin", "Analgesics & NSAIDs"], ["Diclofenac", "Analgesics & NSAIDs"],
+  ["Hydrocodone", "Analgesics & NSAIDs"], ["Hydromorphone", "Analgesics & NSAIDs"], ["Methadone", "Analgesics & NSAIDs"],
+  ["Buprenorphine", "Analgesics & NSAIDs"], ["Naloxone", "Analgesics & NSAIDs"], ["Naltrexone", "Analgesics & NSAIDs"],
+  ["Tapentadol", "Analgesics & NSAIDs"], ["Oxymorphone", "Analgesics & NSAIDs"], ["Lornoxicam", "Analgesics & NSAIDs"],
+  ["Flurbiprofen", "Analgesics & NSAIDs"], ["Mefenamic acid", "Analgesics & NSAIDs"], ["Sulindac", "Analgesics & NSAIDs"],
+  ["Etodolac", "Analgesics & NSAIDs"], ["Diflunisal", "Analgesics & NSAIDs"], ["Oxaprozin", "Analgesics & NSAIDs"],
+  ["Ropivacaine", "Anesthetics"], ["Mepivacaine", "Anesthetics"], ["Prilocaine", "Anesthetics"], ["Benzocaine", "Anesthetics"],
+  ["Procaine", "Anesthetics"], ["Tetracaine", "Anesthetics"], ["Etomidate", "Anesthetics"], ["Thiopental", "Anesthetics"],
+  ["Midazolam", "Anesthetics"], ["Sevoflurane", "Anesthetics"], ["Desflurane", "Anesthetics"], ["Isoflurane", "Anesthetics"],
+  ["Halothane", "Anesthetics"], ["Succinylcholine", "Anesthetics"], ["Rocuronium", "Anesthetics"], ["Vecuronium", "Anesthetics"],
+  ["Atracurium", "Anesthetics"], ["Cisatracurium", "Anesthetics"], ["Pancuronium", "Anesthetics"], ["Mivacurium", "Anesthetics"],
+  ["Dexmedetomidine", "Anesthetics"], ["Remifentanil", "Anesthetics"], ["Alfentanil", "Anesthetics"], ["Sufentanil", "Anesthetics"],
+  ["Nitrous oxide", "Anesthetics"], ["Neostigmine", "Anesthetics"], ["Sugammadex", "Anesthetics"], ["Flumazenil", "Anesthetics"],
+  ["Ampicillin", "Antibiotics"], ["Penicillin G", "Antibiotics"], ["Penicillin V", "Antibiotics"], ["Piperacillin", "Antibiotics"],
+  ["Oxacillin", "Antibiotics"], ["Cloxacillin", "Antibiotics"], ["Flucloxacillin", "Antibiotics"], ["Nafcillin", "Antibiotics"],
+  ["Ticarcillin", "Antibiotics"], ["Cefalexin", "Antibiotics"], ["Cefazolin", "Antibiotics"], ["Cefadroxil", "Antibiotics"],
+  ["Cefuroxime", "Antibiotics"], ["Cefaclor", "Antibiotics"], ["Cefoxitin", "Antibiotics"], ["Ceftriaxone", "Antibiotics"],
+  ["Cefotaxime", "Antibiotics"], ["Ceftazidime", "Antibiotics"], ["Cefixime", "Antibiotics"], ["Cefpodoxime", "Antibiotics"],
+  ["Cefdinir", "Antibiotics"], ["Cefepime", "Antibiotics"], ["Ceftaroline", "Antibiotics"], ["Imipenem", "Antibiotics"],
+  ["Meropenem", "Antibiotics"], ["Ertapenem", "Antibiotics"], ["Doripenem", "Antibiotics"], ["Aztreonam", "Antibiotics"],
+  ["Clavulanic acid", "Antibiotics"], ["Sulbactam", "Antibiotics"], ["Tazobactam", "Antibiotics"], ["Avibactam", "Antibiotics"],
+  ["Relebactam", "Antibiotics"], ["Vaborbactam", "Antibiotics"], ["Gentamicin", "Antibiotics"], ["Tobramycin", "Antibiotics"],
+  ["Amikacin", "Antibiotics"], ["Streptomycin", "Antibiotics"], ["Neomycin", "Antibiotics"], ["Plazomicin", "Antibiotics"],
+  ["Erythromycin", "Antibiotics"], ["Clarithromycin", "Antibiotics"], ["Roxithromycin", "Antibiotics"], ["Spiramycin", "Antibiotics"],
+  ["Telithromycin", "Antibiotics"], ["Tetracycline", "Antibiotics"], ["Doxycycline", "Antibiotics"], ["Minocycline", "Antibiotics"],
+  ["Tigecycline", "Antibiotics"], ["Omadacycline", "Antibiotics"], ["Eravacycline", "Antibiotics"], ["Levofloxacin", "Antibiotics"],
+  ["Moxifloxacin", "Antibiotics"], ["Norfloxacin", "Antibiotics"], ["Ofloxacin", "Antibiotics"], ["Gemifloxacin", "Antibiotics"],
+  ["Delafloxacin", "Antibiotics"], ["Sulfamethoxazole", "Antibiotics"], ["Trimethoprim", "Antibiotics"], ["Sulfadiazine", "Antibiotics"],
+  ["Vancomycin", "Antibiotics"], ["Teicoplanin", "Antibiotics"], ["Dalbavancin", "Antibiotics"], ["Oritavancin", "Antibiotics"],
+  ["Telavancin", "Antibiotics"], ["Linezolid", "Antibiotics"], ["Tedizolid", "Antibiotics"], ["Daptomycin", "Antibiotics"],
+  ["Metronidazole", "Antibiotics"], ["Tinidazole", "Antibiotics"], ["Clindamycin", "Antibiotics"], ["Rifampicin", "Antibiotics"],
+  ["Rifaximin", "Antibiotics"], ["Chloramphenicol", "Antibiotics"], ["Nitrofurantoin", "Antibiotics"], ["Fosfomycin", "Antibiotics"],
+  ["Colistin", "Antibiotics"], ["Polymyxin B", "Antibiotics"], ["Fusidic acid", "Antibiotics"], ["Mupirocin", "Antibiotics"],
+  ["Fidaxomicin", "Antibiotics"], ["Lefamulin", "Antibiotics"], ["Cefiderocol", "Antibiotics"], ["Fluconazole", "Antifungals"],
+  ["Itraconazole", "Antifungals"], ["Voriconazole", "Antifungals"], ["Posaconazole", "Antifungals"], ["Isavuconazole", "Antifungals"],
+  ["Ketoconazole", "Antifungals"], ["Miconazole", "Antifungals"], ["Clotrimazole", "Antifungals"], ["Econazole", "Antifungals"],
+  ["Bifonazole", "Antifungals"], ["Terconazole", "Antifungals"], ["Caspofungin", "Antifungals"], ["Micafungin", "Antifungals"],
+  ["Anidulafungin", "Antifungals"], ["Rezafungin", "Antifungals"], ["Terbinafine", "Antifungals"], ["Naftifine", "Antifungals"],
+  ["Flucytosine", "Antifungals"], ["Griseofulvin", "Antifungals"], ["Ciclopirox", "Antifungals"], ["Amorolfine", "Antifungals"],
+  ["Tolnaftate", "Antifungals"], ["Chloroquine", "Antiparasitics"], ["Hydroxychloroquine", "Antiparasitics"], ["Primaquine", "Antiparasitics"],
+  ["Quinine", "Antiparasitics"], ["Mefloquine", "Antiparasitics"], ["Atovaquone", "Antiparasitics"], ["Proguanil", "Antiparasitics"],
+  ["Lumefantrine", "Antiparasitics"], ["Piperaquine", "Antiparasitics"], ["Albendazole", "Antiparasitics"], ["Mebendazole", "Antiparasitics"],
+  ["Praziquantel", "Antiparasitics"], ["Nitazoxanide", "Antiparasitics"], ["Pyrimethamine", "Antiparasitics"], ["Sulfadoxine", "Antiparasitics"],
+  ["Miltefosine", "Antiparasitics"], ["Pentamidine", "Antiparasitics"], ["Suramin", "Antiparasitics"], ["Benznidazole", "Antiparasitics"],
+  ["Nifurtimox", "Antiparasitics"], ["Ivermectin", "Antiparasitics"], ["Diethylcarbamazine", "Antiparasitics"], ["Pyrantel", "Antiparasitics"],
+  ["Oxamniquine", "Antiparasitics"], ["Zidovudine", "Antivirals"], ["Lamivudine", "Antivirals"], ["Emtricitabine", "Antivirals"],
+  ["Tenofovir disoproxil", "Antivirals"], ["Tenofovir alafenamide", "Antivirals"], ["Abacavir", "Antivirals"], ["Stavudine", "Antivirals"],
+  ["Efavirenz", "Antivirals"], ["Nevirapine", "Antivirals"], ["Rilpivirine", "Antivirals"], ["Etravirine", "Antivirals"],
+  ["Doravirine", "Antivirals"], ["Lopinavir", "Antivirals"], ["Ritonavir", "Antivirals"], ["Atazanavir", "Antivirals"],
+  ["Darunavir", "Antivirals"], ["Fosamprenavir", "Antivirals"], ["Tipranavir", "Antivirals"], ["Raltegravir", "Antivirals"],
+  ["Elvitegravir", "Antivirals"], ["Dolutegravir", "Antivirals"], ["Bictegravir", "Antivirals"], ["Cabotegravir", "Antivirals"],
+  ["Maraviroc", "Antivirals"], ["Sofosbuvir", "Antivirals"], ["Ledipasvir", "Antivirals"], ["Velpatasvir", "Antivirals"],
+  ["Daclatasvir", "Antivirals"], ["Glecaprevir", "Antivirals"], ["Pibrentasvir", "Antivirals"], ["Grazoprevir", "Antivirals"],
+  ["Elbasvir", "Antivirals"], ["Entecavir", "Antivirals"], ["Ribavirin", "Antivirals"], ["Oseltamivir", "Antivirals"],
+  ["Zanamivir", "Antivirals"], ["Baloxavir marboxil", "Antivirals"], ["Peramivir", "Antivirals"], ["Acyclovir", "Antivirals"],
+  ["Valacyclovir", "Antivirals"], ["Famciclovir", "Antivirals"], ["Ganciclovir", "Antivirals"], ["Valganciclovir", "Antivirals"],
+  ["Foscarnet", "Antivirals"], ["Cidofovir", "Antivirals"], ["Nirmatrelvir", "Antivirals"], ["Molnupiravir", "Antivirals"],
+  ["Remdesivir", "Antivirals"], ["Letermovir", "Antivirals"], ["Brincidofovir", "Antivirals"], ["Fluoxetine", "CNS & Psychiatry"],
+  ["Sertraline", "CNS & Psychiatry"], ["Paroxetine", "CNS & Psychiatry"], ["Citalopram", "CNS & Psychiatry"], ["Escitalopram", "CNS & Psychiatry"],
+  ["Fluvoxamine", "CNS & Psychiatry"], ["Venlafaxine", "CNS & Psychiatry"], ["Duloxetine", "CNS & Psychiatry"], ["Desvenlafaxine", "CNS & Psychiatry"],
+  ["Milnacipran", "CNS & Psychiatry"], ["Levomilnacipran", "CNS & Psychiatry"], ["Amitriptyline", "CNS & Psychiatry"], ["Nortriptyline", "CNS & Psychiatry"],
+  ["Imipramine", "CNS & Psychiatry"], ["Clomipramine", "CNS & Psychiatry"], ["Desipramine", "CNS & Psychiatry"], ["Doxepin", "CNS & Psychiatry"],
+  ["Bupropion", "CNS & Psychiatry"], ["Mirtazapine", "CNS & Psychiatry"], ["Trazodone", "CNS & Psychiatry"], ["Vortioxetine", "CNS & Psychiatry"],
+  ["Vilazodone", "CNS & Psychiatry"], ["Agomelatine", "CNS & Psychiatry"], ["Reboxetine", "CNS & Psychiatry"], ["Esketamine", "CNS & Psychiatry"],
+  ["Phenelzine", "CNS & Psychiatry"], ["Tranylcypromine", "CNS & Psychiatry"], ["Selegiline", "CNS & Psychiatry"], ["Haloperidol", "CNS & Psychiatry"],
+  ["Chlorpromazine", "CNS & Psychiatry"], ["Fluphenazine", "CNS & Psychiatry"], ["Perphenazine", "CNS & Psychiatry"], ["Trifluoperazine", "CNS & Psychiatry"],
+  ["Thioridazine", "CNS & Psychiatry"], ["Loxapine", "CNS & Psychiatry"], ["Pimozide", "CNS & Psychiatry"], ["Olanzapine", "CNS & Psychiatry"],
+  ["Risperidone", "CNS & Psychiatry"], ["Quetiapine", "CNS & Psychiatry"], ["Aripiprazole", "CNS & Psychiatry"], ["Ziprasidone", "CNS & Psychiatry"],
+  ["Clozapine", "CNS & Psychiatry"], ["Paliperidone", "CNS & Psychiatry"], ["Asenapine", "CNS & Psychiatry"], ["Iloperidone", "CNS & Psychiatry"],
+  ["Lurasidone", "CNS & Psychiatry"], ["Cariprazine", "CNS & Psychiatry"], ["Brexpiprazole", "CNS & Psychiatry"], ["Lumateperone", "CNS & Psychiatry"],
+  ["Diazepam", "CNS & Psychiatry"], ["Alprazolam", "CNS & Psychiatry"], ["Clonazepam", "CNS & Psychiatry"], ["Lorazepam", "CNS & Psychiatry"],
+  ["Oxazepam", "CNS & Psychiatry"], ["Temazepam", "CNS & Psychiatry"], ["Triazolam", "CNS & Psychiatry"], ["Chlordiazepoxide", "CNS & Psychiatry"],
+  ["Clorazepate", "CNS & Psychiatry"], ["Zolpidem", "CNS & Psychiatry"], ["Zaleplon", "CNS & Psychiatry"], ["Eszopiclone", "CNS & Psychiatry"],
+  ["Zopiclone", "CNS & Psychiatry"], ["Buspirone", "CNS & Psychiatry"], ["Hydroxyzine", "CNS & Psychiatry"], ["Ramelteon", "CNS & Psychiatry"],
+  ["Suvorexant", "CNS & Psychiatry"], ["Lemborexant", "CNS & Psychiatry"], ["Daridorexant", "CNS & Psychiatry"], ["Phenytoin", "CNS & Psychiatry"],
+  ["Carbamazepine", "CNS & Psychiatry"], ["Oxcarbazepine", "CNS & Psychiatry"], ["Eslicarbazepine", "CNS & Psychiatry"], ["Valproic acid", "CNS & Psychiatry"],
+  ["Lamotrigine", "CNS & Psychiatry"], ["Levetiracetam", "CNS & Psychiatry"], ["Brivaracetam", "CNS & Psychiatry"], ["Topiramate", "CNS & Psychiatry"],
+  ["Zonisamide", "CNS & Psychiatry"], ["Gabapentin", "CNS & Psychiatry"], ["Pregabalin", "CNS & Psychiatry"], ["Lacosamide", "CNS & Psychiatry"],
+  ["Perampanel", "CNS & Psychiatry"], ["Rufinamide", "CNS & Psychiatry"], ["Tiagabine", "CNS & Psychiatry"], ["Vigabatrin", "CNS & Psychiatry"],
+  ["Phenobarbital", "CNS & Psychiatry"], ["Ethosuximide", "CNS & Psychiatry"], ["Clobazam", "CNS & Psychiatry"], ["Cenobamate", "CNS & Psychiatry"],
+  ["Levodopa", "CNS & Psychiatry"], ["Carbidopa", "CNS & Psychiatry"], ["Pramipexole", "CNS & Psychiatry"], ["Ropinirole", "CNS & Psychiatry"],
+  ["Rotigotine", "CNS & Psychiatry"], ["Rasagiline", "CNS & Psychiatry"], ["Safinamide", "CNS & Psychiatry"], ["Entacapone", "CNS & Psychiatry"],
+  ["Tolcapone", "CNS & Psychiatry"], ["Opicapone", "CNS & Psychiatry"], ["Amantadine", "CNS & Psychiatry"], ["Trihexyphenidyl", "CNS & Psychiatry"],
+  ["Benztropine", "CNS & Psychiatry"], ["Methylphenidate", "CNS & Psychiatry"], ["Dextroamphetamine", "CNS & Psychiatry"], ["Lisdexamfetamine", "CNS & Psychiatry"],
+  ["Atomoxetine", "CNS & Psychiatry"], ["Viloxazine", "CNS & Psychiatry"], ["Guanfacine", "CNS & Psychiatry"], ["Donepezil", "CNS & Psychiatry"],
+  ["Rivastigmine", "CNS & Psychiatry"], ["Galantamine", "CNS & Psychiatry"], ["Memantine", "CNS & Psychiatry"], ["Lithium", "CNS & Psychiatry"],
+  ["Acamprosate", "CNS & Psychiatry"], ["Disulfiram", "CNS & Psychiatry"], ["Varenicline", "CNS & Psychiatry"], ["Sumatriptan", "CNS & Psychiatry"],
+  ["Rizatriptan", "CNS & Psychiatry"], ["Zolmitriptan", "CNS & Psychiatry"], ["Naratriptan", "CNS & Psychiatry"], ["Eletriptan", "CNS & Psychiatry"],
+  ["Almotriptan", "CNS & Psychiatry"], ["Frovatriptan", "CNS & Psychiatry"], ["Lasmiditan", "CNS & Psychiatry"], ["Ubrogepant", "CNS & Psychiatry"],
+  ["Rimegepant", "CNS & Psychiatry"], ["Atogepant", "CNS & Psychiatry"], ["Metoprolol", "Cardiovascular"], ["Atenolol", "Cardiovascular"],
+  ["Propranolol", "Cardiovascular"], ["Carvedilol", "Cardiovascular"], ["Bisoprolol", "Cardiovascular"], ["Labetalol", "Cardiovascular"],
+  ["Nebivolol", "Cardiovascular"], ["Esmolol", "Cardiovascular"], ["Sotalol", "Cardiovascular"], ["Enalapril", "Cardiovascular"],
+  ["Lisinopril", "Cardiovascular"], ["Ramipril", "Cardiovascular"], ["Captopril", "Cardiovascular"], ["Perindopril", "Cardiovascular"],
+  ["Fosinopril", "Cardiovascular"], ["Quinapril", "Cardiovascular"], ["Benazepril", "Cardiovascular"], ["Trandolapril", "Cardiovascular"],
+  ["Losartan", "Cardiovascular"], ["Valsartan", "Cardiovascular"], ["Irbesartan", "Cardiovascular"], ["Candesartan", "Cardiovascular"],
+  ["Olmesartan", "Cardiovascular"], ["Telmisartan", "Cardiovascular"], ["Azilsartan", "Cardiovascular"], ["Amlodipine", "Cardiovascular"],
+  ["Nifedipine", "Cardiovascular"], ["Diltiazem", "Cardiovascular"], ["Verapamil", "Cardiovascular"], ["Felodipine", "Cardiovascular"],
+  ["Nicardipine", "Cardiovascular"], ["Nimodipine", "Cardiovascular"], ["Clevidipine", "Cardiovascular"], ["Lercanidipine", "Cardiovascular"],
+  ["Furosemide", "Cardiovascular"], ["Hydrochlorothiazide", "Cardiovascular"], ["Chlorthalidone", "Cardiovascular"], ["Indapamide", "Cardiovascular"],
+  ["Metolazone", "Cardiovascular"], ["Spironolactone", "Cardiovascular"], ["Eplerenone", "Cardiovascular"], ["Finerenone", "Cardiovascular"],
+  ["Amiloride", "Cardiovascular"], ["Triamterene", "Cardiovascular"], ["Torsemide", "Cardiovascular"], ["Bumetanide", "Cardiovascular"],
+  ["Atorvastatin", "Cardiovascular"], ["Rosuvastatin", "Cardiovascular"], ["Simvastatin", "Cardiovascular"], ["Pravastatin", "Cardiovascular"],
+  ["Lovastatin", "Cardiovascular"], ["Fluvastatin", "Cardiovascular"], ["Pitavastatin", "Cardiovascular"], ["Ezetimibe", "Cardiovascular"],
+  ["Fenofibrate", "Cardiovascular"], ["Gemfibrozil", "Cardiovascular"], ["Bempedoic acid", "Cardiovascular"], ["Colestyramine", "Cardiovascular"],
+  ["Colesevelam", "Cardiovascular"], ["Amiodarone", "Cardiovascular"], ["Flecainide", "Cardiovascular"], ["Propafenone", "Cardiovascular"],
+  ["Quinidine", "Cardiovascular"], ["Procainamide", "Cardiovascular"], ["Disopyramide", "Cardiovascular"], ["Mexiletine", "Cardiovascular"],
+  ["Dronedarone", "Cardiovascular"], ["Dofetilide", "Cardiovascular"], ["Ibutilide", "Cardiovascular"], ["Adenosine", "Cardiovascular"],
+  ["Nitroglycerin", "Cardiovascular"], ["Isosorbide mononitrate", "Cardiovascular"], ["Isosorbide dinitrate", "Cardiovascular"], ["Ranolazine", "Cardiovascular"],
+  ["Ivabradine", "Cardiovascular"], ["Hydralazine", "Cardiovascular"], ["Minoxidil", "Cardiovascular"], ["Prazosin", "Cardiovascular"],
+  ["Doxazosin", "Cardiovascular"], ["Terazosin", "Cardiovascular"], ["Clonidine", "Cardiovascular"], ["Methyldopa", "Cardiovascular"],
+  ["Moxonidine", "Cardiovascular"], ["Sacubitril", "Cardiovascular"], ["Vericiguat", "Cardiovascular"], ["Warfarin", "Cardiovascular"],
+  ["Fondaparinux", "Cardiovascular"], ["Rivaroxaban", "Cardiovascular"], ["Apixaban", "Cardiovascular"], ["Edoxaban", "Cardiovascular"],
+  ["Dabigatran", "Cardiovascular"], ["Clopidogrel", "Cardiovascular"], ["Prasugrel", "Cardiovascular"], ["Ticagrelor", "Cardiovascular"],
+  ["Dipyridamole", "Cardiovascular"], ["Cilostazol", "Cardiovascular"], ["Vorapaxar", "Cardiovascular"], ["Argatroban", "Cardiovascular"],
+  ["Bivalirudin", "Cardiovascular"], ["Sildenafil", "Cardiovascular"], ["Tadalafil", "Cardiovascular"], ["Bosentan", "Cardiovascular"],
+  ["Ambrisentan", "Cardiovascular"], ["Macitentan", "Cardiovascular"], ["Riociguat", "Cardiovascular"], ["Selexipag", "Cardiovascular"],
+  ["Iloprost", "Cardiovascular"], ["Digoxin", "Cardiovascular"], ["Tretinoin", "Dermatology"], ["Adapalene", "Dermatology"],
+  ["Tazarotene", "Dermatology"], ["Trifarotene", "Dermatology"], ["Benzoyl peroxide", "Dermatology"], ["Azelaic acid", "Dermatology"],
+  ["Isotretinoin", "Dermatology"], ["Calcipotriol", "Dermatology"], ["Clobetasol", "Dermatology"], ["Pimecrolimus", "Dermatology"],
+  ["Crisaborole", "Dermatology"], ["Tapinarof", "Dermatology"], ["Acitretin", "Dermatology"], ["Dapsone", "Dermatology"],
+  ["Monobenzone", "Dermatology"], ["Hydroquinone", "Dermatology"], ["Salicylic acid", "Dermatology"], ["Iohexol", "Diagnostic & Imaging"],
+  ["Iodixanol", "Diagnostic & Imaging"], ["Ioversol", "Diagnostic & Imaging"], ["Iopamidol", "Diagnostic & Imaging"], ["Iomeprol", "Diagnostic & Imaging"],
+  ["Barium sulfate", "Diagnostic & Imaging"], ["Gadolinium chelates", "Diagnostic & Imaging"], ["Technetium compounds", "Diagnostic & Imaging"],
+  ["Iobenguane", "Diagnostic & Imaging"], ["Florbetapir", "Diagnostic & Imaging"], ["Florbetaben", "Diagnostic & Imaging"], ["Flutemetamol", "Diagnostic & Imaging"],
+  ["Glipizide", "Endocrine & Metabolic"], ["Glyburide", "Endocrine & Metabolic"], ["Glimepiride", "Endocrine & Metabolic"],
+  ["Gliclazide", "Endocrine & Metabolic"], ["Tolbutamide", "Endocrine & Metabolic"], ["Pioglitazone", "Endocrine & Metabolic"],
+  ["Rosiglitazone", "Endocrine & Metabolic"], ["Sitagliptin", "Endocrine & Metabolic"], ["Saxagliptin", "Endocrine & Metabolic"],
+  ["Alogliptin", "Endocrine & Metabolic"], ["Linagliptin", "Endocrine & Metabolic"], ["Empagliflozin", "Endocrine & Metabolic"],
+  ["Dapagliflozin", "Endocrine & Metabolic"], ["Canagliflozin", "Endocrine & Metabolic"], ["Ertugliflozin", "Endocrine & Metabolic"],
+  ["Repaglinide", "Endocrine & Metabolic"], ["Nateglinide", "Endocrine & Metabolic"], ["Acarbose", "Endocrine & Metabolic"],
+  ["Miglitol", "Endocrine & Metabolic"], ["Levothyroxine", "Endocrine & Metabolic"], ["Liothyronine", "Endocrine & Metabolic"],
+  ["Methimazole", "Endocrine & Metabolic"], ["Propylthiouracil", "Endocrine & Metabolic"], ["Carbimazole", "Endocrine & Metabolic"],
+  ["Prednisone", "Endocrine & Metabolic"], ["Prednisolone", "Endocrine & Metabolic"], ["Methylprednisolone", "Endocrine & Metabolic"],
+  ["Dexamethasone", "Endocrine & Metabolic"], ["Hydrocortisone", "Endocrine & Metabolic"], ["Betamethasone", "Endocrine & Metabolic"],
+  ["Fludrocortisone", "Endocrine & Metabolic"], ["Deflazacort", "Endocrine & Metabolic"], ["Ethinyl estradiol", "Endocrine & Metabolic"],
+  ["Estradiol", "Endocrine & Metabolic"], ["Progesterone", "Endocrine & Metabolic"], ["Norethindrone", "Endocrine & Metabolic"],
+  ["Levonorgestrel", "Endocrine & Metabolic"], ["Desogestrel", "Endocrine & Metabolic"], ["Drospirenone", "Endocrine & Metabolic"],
+  ["Cyproterone", "Endocrine & Metabolic"], ["Testosterone", "Endocrine & Metabolic"], ["Oxandrolone", "Endocrine & Metabolic"],
+  ["Danazol", "Endocrine & Metabolic"], ["Tamoxifen", "Endocrine & Metabolic"], ["Raloxifene", "Endocrine & Metabolic"],
+  ["Anastrozole", "Endocrine & Metabolic"], ["Letrozole", "Endocrine & Metabolic"], ["Exemestane", "Endocrine & Metabolic"],
+  ["Clomiphene", "Endocrine & Metabolic"], ["Mifepristone", "Endocrine & Metabolic"], ["Finasteride", "Endocrine & Metabolic"],
+  ["Dutasteride", "Endocrine & Metabolic"], ["Flutamide", "Endocrine & Metabolic"], ["Bicalutamide", "Endocrine & Metabolic"],
+  ["Alendronate", "Endocrine & Metabolic"], ["Risedronate", "Endocrine & Metabolic"], ["Ibandronate", "Endocrine & Metabolic"],
+  ["Zoledronic acid", "Endocrine & Metabolic"], ["Calcitriol", "Endocrine & Metabolic"], ["Cholecalciferol", "Endocrine & Metabolic"],
+  ["Osilodrostat", "Endocrine & Metabolic"], ["Mitotane", "Endocrine & Metabolic"], ["Metyrapone", "Endocrine & Metabolic"],
+  ["Esomeprazole", "Gastroenterology"], ["Lansoprazole", "Gastroenterology"], ["Pantoprazole", "Gastroenterology"],
+  ["Rabeprazole", "Gastroenterology"], ["Dexlansoprazole", "Gastroenterology"], ["Vonoprazan", "Gastroenterology"],
+  ["Famotidine", "Gastroenterology"], ["Cimetidine", "Gastroenterology"], ["Nizatidine", "Gastroenterology"], ["Sucralfate", "Gastroenterology"],
+  ["Misoprostol", "Gastroenterology"], ["Metoclopramide", "Gastroenterology"], ["Domperidone", "Gastroenterology"],
+  ["Ondansetron", "Gastroenterology"], ["Granisetron", "Gastroenterology"], ["Palonosetron", "Gastroenterology"], ["Aprepitant", "Gastroenterology"],
+  ["Netupitant", "Gastroenterology"], ["Rolapitant", "Gastroenterology"], ["Loperamide", "Gastroenterology"], ["Diphenoxylate", "Gastroenterology"],
+  ["Lactulose", "Gastroenterology"], ["Linaclotide", "Gastroenterology"], ["Plecanatide", "Gastroenterology"], ["Lubiprostone", "Gastroenterology"],
+  ["Prucalopride", "Gastroenterology"], ["Tenapanor", "Gastroenterology"], ["Alosetron", "Gastroenterology"], ["Eluxadoline", "Gastroenterology"],
+  ["Mesalamine", "Gastroenterology"], ["Sulfasalazine", "Gastroenterology"], ["Olsalazine", "Gastroenterology"], ["Balsalazide", "Gastroenterology"],
+  ["Ursodeoxycholic acid", "Gastroenterology"], ["Obeticholic acid", "Gastroenterology"], ["Chenodeoxycholic acid", "Gastroenterology"],
+  ["Bismuth subsalicylate", "Gastroenterology"], ["Hydroxyurea", "Hematology"], ["Roxadustat", "Hematology"], ["Vadadustat", "Hematology"],
+  ["Daprodustat", "Hematology"], ["Anagrelide", "Hematology"], ["Eltrombopag", "Hematology"], ["Avatrombopag", "Hematology"],
+  ["Luspatercept (peptide)", "Hematology"], ["Azathioprine", "Immunology & Rheumatology"], ["Mycophenolate mofetil", "Immunology & Rheumatology"],
+  ["Cyclosporine", "Immunology & Rheumatology"], ["Tacrolimus", "Immunology & Rheumatology"], ["Sirolimus", "Immunology & Rheumatology"],
+  ["Everolimus", "Immunology & Rheumatology"], ["Leflunomide", "Immunology & Rheumatology"], ["Tofacitinib", "Immunology & Rheumatology"],
+  ["Baricitinib", "Immunology & Rheumatology"], ["Upadacitinib", "Immunology & Rheumatology"], ["Filgotinib", "Immunology & Rheumatology"],
+  ["Colchicine", "Immunology & Rheumatology"], ["Allopurinol", "Immunology & Rheumatology"], ["Febuxostat", "Immunology & Rheumatology"],
+  ["Probenecid", "Immunology & Rheumatology"], ["Apremilast", "Immunology & Rheumatology"], ["Hydroxychloroquine", "Immunology & Rheumatology"],
+  ["Cyclobenzaprine", "Musculoskeletal"], ["Baclofen", "Musculoskeletal"], ["Carisoprodol", "Musculoskeletal"], ["Methocarbamol", "Musculoskeletal"],
+  ["Tizanidine", "Musculoskeletal"], ["Dantrolene", "Musculoskeletal"], ["Orphenadrine", "Musculoskeletal"], ["Chlorzoxazone", "Musculoskeletal"],
+  ["Alendronate", "Musculoskeletal"], ["Risedronate", "Musculoskeletal"], ["Oxytocin (synthetic)", "Obstetrics & Gynecology"],
+  ["Misoprostol", "Obstetrics & Gynecology"], ["Dinoprostone", "Obstetrics & Gynecology"], ["Mifepristone", "Obstetrics & Gynecology"],
+  ["Levonorgestrel (EC)", "Obstetrics & Gynecology"], ["Magnesium sulfate", "Obstetrics & Gynecology"], ["Nifedipine (tocolytic)", "Obstetrics & Gynecology"],
+  ["Betamethasone (antenatal)", "Obstetrics & Gynecology"], ["Carbetocin", "Obstetrics & Gynecology"], ["Atosiban", "Obstetrics & Gynecology"],
+  ["Terbutaline (tocolytic)", "Obstetrics & Gynecology"], ["Cyclophosphamide", "Oncology"], ["Ifosfamide", "Oncology"],
+  ["Chlorambucil", "Oncology"], ["Melphalan", "Oncology"], ["Busulfan", "Oncology"], ["Bendamustine", "Oncology"], ["Carmustine", "Oncology"],
+  ["Lomustine", "Oncology"], ["Dacarbazine", "Oncology"], ["Temozolomide", "Oncology"], ["Cisplatin", "Oncology"], ["Carboplatin", "Oncology"],
+  ["Oxaliplatin", "Oncology"], ["Methotrexate", "Oncology"], ["Pemetrexed", "Oncology"], ["5-Fluorouracil", "Oncology"],
+  ["Capecitabine", "Oncology"], ["Gemcitabine", "Oncology"], ["Cytarabine", "Oncology"], ["Azacitidine", "Oncology"], ["Decitabine", "Oncology"],
+  ["Fludarabine", "Oncology"], ["Cladribine", "Oncology"], ["Clofarabine", "Oncology"], ["Hydroxyurea", "Oncology"], ["Irinotecan", "Oncology"],
+  ["Topotecan", "Oncology"], ["Etoposide", "Oncology"], ["Imatinib", "Oncology"], ["Dasatinib", "Oncology"], ["Nilotinib", "Oncology"],
+  ["Bosutinib", "Oncology"], ["Ponatinib", "Oncology"], ["Asciminib", "Oncology"], ["Gefitinib", "Oncology"], ["Erlotinib", "Oncology"],
+  ["Afatinib", "Oncology"], ["Osimertinib", "Oncology"], ["Dacomitinib", "Oncology"], ["Lapatinib", "Oncology"], ["Neratinib", "Oncology"],
+  ["Tucatinib", "Oncology"], ["Sorafenib", "Oncology"], ["Sunitinib", "Oncology"], ["Pazopanib", "Oncology"], ["Axitinib", "Oncology"],
+  ["Regorafenib", "Oncology"], ["Cabozantinib", "Oncology"], ["Vandetanib", "Oncology"], ["Lenvatinib", "Oncology"], ["Alectinib", "Oncology"],
+  ["Ceritinib", "Oncology"], ["Crizotinib", "Oncology"], ["Brigatinib", "Oncology"], ["Lorlatinib", "Oncology"], ["Trametinib", "Oncology"],
+  ["Cobimetinib", "Oncology"], ["Binimetinib", "Oncology"], ["Selumetinib", "Oncology"], ["Vemurafenib", "Oncology"], ["Dabrafenib", "Oncology"],
+  ["Encorafenib", "Oncology"], ["Ibrutinib", "Oncology"], ["Acalabrutinib", "Oncology"], ["Zanubrutinib", "Oncology"], ["Idelalisib", "Oncology"],
+  ["Copanlisib", "Oncology"], ["Alpelisib", "Oncology"], ["Venetoclax", "Oncology"], ["Palbociclib", "Oncology"], ["Ribociclib", "Oncology"],
+  ["Abemaciclib", "Oncology"], ["Ruxolitinib", "Oncology"], ["Vismodegib", "Oncology"], ["Sonidegib", "Oncology"], ["Glasdegib", "Oncology"],
+  ["Ivosidenib", "Oncology"], ["Enasidenib", "Oncology"], ["Midostaurin", "Oncology"], ["Gilteritinib", "Oncology"], ["Fedratinib", "Oncology"],
+  ["Avapritinib", "Oncology"], ["Ripretinib", "Oncology"], ["Capmatinib", "Oncology"], ["Selpercatinib", "Oncology"], ["Larotrectinib", "Oncology"],
+  ["Entrectinib", "Oncology"], ["Adagrasib", "Oncology"], ["Sotorasib", "Oncology"], ["Olaparib", "Oncology"], ["Niraparib", "Oncology"],
+  ["Rucaparib", "Oncology"], ["Talazoparib", "Oncology"], ["Enzalutamide", "Oncology"], ["Apalutamide", "Oncology"], ["Darolutamide", "Oncology"],
+  ["Abiraterone", "Oncology"], ["Thalidomide", "Oncology"], ["Lenalidomide", "Oncology"], ["Pomalidomide", "Oncology"], ["Bortezomib", "Oncology"],
+  ["Carfilzomib", "Oncology"], ["Ixazomib", "Oncology"], ["Vorinostat", "Oncology"], ["Romidepsin", "Oncology"], ["Belinostat", "Oncology"],
+  ["Panobinostat", "Oncology"], ["Arsenic trioxide", "Oncology"], ["Tretinoin (ATRA)", "Oncology"], ["Tazemetostat", "Oncology"],
+  ["Olutasidenib", "Oncology"], ["Fulvestrant", "Oncology"], ["Mechlorethamine", "Oncology"], ["Epirubicin", "Oncology"],
+  ["Mitoxantrone", "Oncology"], ["Latanoprost", "Ophthalmology"], ["Bimatoprost", "Ophthalmology"], ["Travoprost", "Ophthalmology"],
+  ["Tafluprost", "Ophthalmology"], ["Timolol ophthalmic", "Ophthalmology"], ["Dorzolamide", "Ophthalmology"], ["Brinzolamide", "Ophthalmology"],
+  ["Brimonidine", "Ophthalmology"], ["Apraclonidine", "Ophthalmology"], ["Pilocarpine", "Ophthalmology"], ["Tropicamide", "Ophthalmology"],
+  ["Cyclopentolate", "Ophthalmology"], ["Ketorolac ophthalmic", "Ophthalmology"], ["Nepafenac", "Ophthalmology"], ["Bromfenac", "Ophthalmology"],
+  ["Fluorometholone", "Ophthalmology"], ["Loteprednol", "Ophthalmology"], ["Lifitegrast", "Ophthalmology"], ["Verteporfin", "Ophthalmology"],
+  ["Ganciclovir gel", "Ophthalmology"], ["Levalbuterol", "Respiratory"], ["Terbutaline", "Respiratory"], ["Salmeterol", "Respiratory"],
+  ["Formoterol", "Respiratory"], ["Indacaterol", "Respiratory"], ["Vilanterol", "Respiratory"], ["Olodaterol", "Respiratory"],
+  ["Ipratropium", "Respiratory"], ["Tiotropium", "Respiratory"], ["Glycopyrronium", "Respiratory"], ["Aclidinium", "Respiratory"],
+  ["Umeclidinium", "Respiratory"], ["Theophylline", "Respiratory"], ["Aminophylline", "Respiratory"], ["Fluticasone", "Respiratory"],
+  ["Budesonide", "Respiratory"], ["Beclomethasone", "Respiratory"], ["Mometasone", "Respiratory"], ["Ciclesonide", "Respiratory"],
+  ["Montelukast", "Respiratory"], ["Zafirlukast", "Respiratory"], ["Zileuton", "Respiratory"], ["Ivacaftor", "Respiratory"],
+  ["Lumacaftor", "Respiratory"], ["Tezacaftor", "Respiratory"], ["Elexacaftor", "Respiratory"], ["Roflumilast", "Respiratory"],
+  ["Dextromethorphan", "Respiratory"], ["Guaifenesin", "Respiratory"], ["Benzonatate", "Respiratory"], ["Acetylcysteine", "Respiratory"],
+  ["Erdosteine", "Respiratory"], ["Ambroxol", "Respiratory"], ["Acetylcysteine (antidote)", "Toxicology & Antidotes"],
+  ["Deferoxamine", "Toxicology & Antidotes"], ["Deferasirox", "Toxicology & Antidotes"], ["Deferiprone", "Toxicology & Antidotes"],
+  ["Succimer (DMSA)", "Toxicology & Antidotes"], ["Penicillamine", "Toxicology & Antidotes"], ["Pralidoxime", "Toxicology & Antidotes"],
+  ["Methylene blue", "Toxicology & Antidotes"], ["Fomepizole", "Toxicology & Antidotes"], ["Dimercaprol (BAL)", "Toxicology & Antidotes"],
+  ["Glucagon", "Toxicology & Antidotes"], ["Activated charcoal", "Toxicology & Antidotes"], ["Atropine", "Toxicology & Antidotes"],
+  ["Physostigmine", "Toxicology & Antidotes"], ["Pyridostigmine", "Toxicology & Antidotes"], ["Tamsulosin", "Urology"],
+  ["Alfuzosin", "Urology"], ["Silodosin", "Urology"], ["Oxybutynin", "Urology"], ["Tolterodine", "Urology"], ["Solifenacin", "Urology"],
+  ["Darifenacin", "Urology"], ["Fesoterodine", "Urology"], ["Mirabegron", "Urology"], ["Vibegron", "Urology"], ["Vardenafil", "Urology"],
+  ["Avanafil", "Urology"], ["Bethanechol", "Urology"], ["Phenazopyridine", "Urology"], ["Flavoxate", "Urology"], ["Folic acid", "Vitamins & Nutritional"],
+  ["Cyanocobalamin (B12)", "Vitamins & Nutritional"], ["Pyridoxine (B6)", "Vitamins & Nutritional"], ["Thiamine (B1)", "Vitamins & Nutritional"],
+  ["Riboflavin (B2)", "Vitamins & Nutritional"], ["Niacin (B3)", "Vitamins & Nutritional"], ["Ascorbic acid", "Vitamins & Nutritional"],
+  ["Cholecalciferol (D3)", "Vitamins & Nutritional"], ["Ergocalciferol (D2)", "Vitamins & Nutritional"], ["Phytonadione (K1)", "Vitamins & Nutritional"],
+  ["Retinol (Vitamin A)", "Vitamins & Nutritional"], ["Biotin", "Vitamins & Nutritional"], ["Iron sulfate", "Vitamins & Nutritional"],
+  ["Ferrous gluconate", "Vitamins & Nutritional"], ["Calcium carbonate", "Vitamins & Nutritional"], ["Magnesium oxide", "Vitamins & Nutritional"],
+  ["Zinc sulfate", "Vitamins & Nutritional"], ["Potassium chloride", "Vitamins & Nutritional"]
+];
+
+export async function cleanupDuplicates() {
+  console.log('Checking for duplicates in compounds...');
+  const compoundsRef = collection(db, 'compounds');
+  const snap = await getDocs(compoundsRef);
+  
+  const seen = new Set<string>();
+  const duplicates: string[] = [];
+  
+  snap.docs.forEach(doc => {
+    const name = doc.data().name?.toLowerCase()?.trim();
+    if (name && seen.has(name)) {
+      duplicates.push(doc.id);
+    } else if (name) {
+      seen.add(name);
+    }
+  });
+  
+  if (duplicates.length > 0) {
+    console.log(`Found ${duplicates.length} duplicates. Deleting...`);
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < duplicates.length; i += CHUNK_SIZE) {
+      const chunk = duplicates.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(db);
+      chunk.forEach(id => {
+        batch.delete(doc(db, 'compounds', id));
+      });
+      await batch.commit();
+    }
+    console.log('Cleanup complete.');
+  } else {
+    console.log('No duplicates found.');
+  }
+}
+
+export async function seedDatabase() {
+  const compoundsRef = collection(db, 'compounds');
+  
+  // Get existing count
+  const existingSnap = await getDocs(compoundsRef);
+  
+  // If we already have a large number of compounds AND they don't have categories, skip
+  const firstDoc = existingSnap.docs[0];
+  if (existingSnap.size > 500 && firstDoc && !firstDoc.data().category) {
+    console.log('Database already contains full library without categories. Checking for duplicates...');
+    await cleanupDuplicates();
+    return;
+  }
+  
+  console.log('Clearing existing compounds for fresh update...');
+  const deleteBatch = writeBatch(db);
+  existingSnap.docs.forEach(doc => {
+    deleteBatch.delete(doc.ref);
+  });
+  await deleteBatch.commit();
+
+  console.log('Seeding database with full library...');
+  
+  // Combine known SMILES with additional names
+  const finalMap = new Map<string, string>();
+  
+  // First add known ones
+  API_DATA.forEach(([name, _, smiles]) => {
+    finalMap.set(name, smiles);
+  });
+  
+  // Then add additional ones if they don't exist
+  ADDITIONAL_NAMES.forEach(([name, _]) => {
+    if (!finalMap.has(name)) {
+      finalMap.set(name, "");
+    }
+  });
+
+  const finalArray = Array.from(finalMap.entries());
+  
+  // Firestore batches are limited to 500 operations.
+  const CHUNK_SIZE = 400;
+  for (let i = 0; i < finalArray.length; i += CHUNK_SIZE) {
+    const chunk = finalArray.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    
+    chunk.forEach(([name, smiles]) => {
+      // Use a sanitized version of the name as ID to prevent duplicates
+      const docId = name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      const docRef = doc(db, 'compounds', docId);
+      batch.set(docRef, {
+        name,
+        smiles,
+        createdAt: new Date().toISOString()
+      });
+    });
+    
+    await batch.commit();
+    console.log(`Seeded chunk ${i / CHUNK_SIZE + 1}`);
+  }
+
+  console.log('Seeding complete.');
+}

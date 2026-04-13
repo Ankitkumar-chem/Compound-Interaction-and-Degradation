@@ -1,0 +1,39 @@
+{
+  "entities": {
+    "Compound": {
+      "title": "Compound",
+      "description": "A chemical compound in the library",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Common name of the compound" },
+        "smiles": { "type": "string", "description": "SMILES representation of the structure" },
+        "category": { "type": "string", "description": "Therapeutic category" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "smiles"]
+    },
+    "Prediction": {
+      "title": "Prediction",
+      "description": "A saved prediction result",
+      "type": "object",
+      "properties": {
+        "inputs": { "type": "array", "items": { "type": "object" } },
+        "result": { "type": "object" },
+        "method": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["inputs", "result", "method", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/compounds/{compoundId}": {
+      "schema": "Compound",
+      "description": "Library of chemical compounds"
+    },
+    "/predictions/{predictionId}": {
+      "schema": "Prediction",
+      "description": "History of predictions for training and review"
+    }
+  }
+}

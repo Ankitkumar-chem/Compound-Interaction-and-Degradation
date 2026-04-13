@@ -18,11 +18,16 @@ export interface PredictionResult {
     smiles: string;
     structureDescription: string;
     origin: string;
-    probability: number;
+    probability: number; // Primary probability for ranking
+    probabilityHeuristic?: number;
+    probabilityBoltzmann?: number;
+    relativeEnergy?: number;
     condition: "Oxidation" | "Acidic Hydrolysis" | "Basic Hydrolysis" | "Photodegradation" | "Thermal Degradation";
     source: "Stress degradation" | "Interaction with other compound";
   }[];
 }
+
+export type PredictionMethod = "Boltzmann" | "Heuristic" | "Both";
 
 export type InputType = "Name" | "SMILES" | "SMARTS" | "InChI";
 
@@ -39,7 +44,8 @@ export interface CompoundInput {
 }
 
 export async function predictInteraction(
-  inputs: CompoundInput[]
+  inputs: CompoundInput[],
+  method: PredictionMethod = "Heuristic"
 ): Promise<PredictionResult> {
   // Pre-validation
   for (const input of inputs) {
@@ -65,13 +71,65 @@ export async function predictInteraction(
     .map((input, i) => `Compound ${i + 1}: "${input.value}" (provided as ${input.type})`)
     .join("\n    ");
 
+  let probabilityInstruction = "";
+  if (method === "Boltzmann") {
+    probabilityInstruction = "Probability of formation based on Boltzmann distribution at 298K. You MUST also provide the estimated relative formation energy (relativeEnergy) in kcal/mol.";
+  } else if (method === "Heuristic") {
+    probabilityInstruction = "Probability of formation based on chemical stability principles and heuristic reasoning.";
+  } else if (method === "Both") {
+    probabilityInstruction = "Provide BOTH 'probabilityHeuristic' (based on expert reasoning) and 'probabilityBoltzmann' (based on thermodynamic ΔG at 298K). You MUST also provide 'relativeEnergy' in kcal/mol. The main 'probability' field should match 'probabilityBoltzmann' for ranking purposes.";
+  }
+
+  const impurityProperties: any = {
+    iupacName: { type: Type.STRING },
+    smiles: { type: Type.STRING },
+    structureDescription: { type: Type.STRING },
+    origin: { type: Type.STRING },
+    probability: { 
+      type: Type.NUMBER, 
+      description: "Primary probability of formation as a decimal between 0.0 and 1.0 (e.g., 0.85 for 85%). Used for ranking." 
+    },
+    condition: { 
+      type: Type.STRING, 
+      enum: ["Oxidation", "Acidic Hydrolysis", "Basic Hydrolysis", "Photodegradation", "Thermal Degradation"] 
+    },
+    source: { 
+      type: Type.STRING, 
+      enum: ["Stress degradation", "Interaction with other compound"] 
+    }
+  };
+
+  const requiredImpurityFields = ["iupacName", "smiles", "structureDescription", "origin", "probability", "condition", "source"];
+
+  if (method === "Boltzmann" || method === "Both") {
+    impurityProperties.relativeEnergy = { type: Type.NUMBER, description: "Relative formation energy in kcal/mol" };
+    requiredImpurityFields.push("relativeEnergy");
+  }
+
+  if (method === "Both") {
+    impurityProperties.probabilityHeuristic = { 
+      type: Type.NUMBER, 
+      description: "Heuristic-based probability as a decimal between 0.0 and 1.0" 
+    };
+    impurityProperties.probabilityBoltzmann = { 
+      type: Type.NUMBER, 
+      description: "Boltzmann-based probability as a decimal between 0.0 and 1.0" 
+    };
+    requiredImpurityFields.push("probabilityHeuristic", "probabilityBoltzmann");
+  }
+
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Predict and evaluate the degradation of Compound 1 in the following mixture:\n${compoundsInfo}`,
+      model: "gemini-3.1-pro-preview",
+      contents: `Predict and evaluate the degradation of Compound 1 in the following mixture using the ${method === "Both" ? "Heuristic AND Boltzmann" : method}-based approach:\n${compoundsInfo}`,
       config: {
-        systemInstruction: `You are an expert pharmaceutical scientist specializing in drug stability and drug-excipient compatibility (DEC). 
-        Your task is to predict the degradation of Compound 1 specifically.
+        systemInstruction: `You are a professional pharmaceutical degradation evaluator. 
+        Your task is to predict the degradation of Compound 1 using two distinct and independent analytical frameworks:
+        
+        1. HEURISTIC ANALYSIS: Based on expert chemical reasoning, reactive site identification, and known reaction kinetics.
+        2. BOLTZMANN ANALYSIS: Based on thermodynamic stability and calculated relative formation energy (ΔG) at 298K.
+        
+        When "Both" is selected, you must perform these two analyses independently for each predicted impurity to provide a comparative perspective.
         
         Evaluate the degradation of Compound 1 due to:
         1. Stress degradation of Compound 1.
@@ -87,18 +145,20 @@ export async function predictInteraction(
         First, identify the chemical structures correctly for ALL provided compounds.
         For each compound, provide:
         - Identified name.
-        - SMILES string (MUST be a valid, standard, canonical SMILES string compatible with RDKit and PubChem. DO NOT include spaces or line breaks. Ensure all parentheses are balanced and all ring closures are correctly numbered).
+        - SMILES string (MUST be a valid, standard, canonical SMILES string compatible with RDKit and PubChem).
         - List of key structural features.
-        - List of specific "Interaction Sites" (e.g., "Carbonyl oxygen", "Primary amine group", "Alpha-carbon to the ester") that are likely to be involved in degradation or interaction.
+        - List of specific "Interaction Sites" likely to be involved in degradation.
         
         Predict exactly 10 possible degradation impurities or interaction products derived from Compound 1.
         For each product, you MUST specify:
         - Whether it forms from "Stress degradation" or "Interaction with other compound".
-        - Which specific condition it forms under (Oxidation, Acidic Hydrolysis, Basic Hydrolysis, Photodegradation, or Thermal Degradation).
-        - IUPAC name, SMILES string (MUST be valid, canonical, contain NO spaces, and have perfectly balanced parentheses).
-        - Probability of formation based on chemical stability principles.
+        - Which specific condition it forms under.
+        - IUPAC name, SMILES string (MUST be valid, canonical).
+        - ${probabilityInstruction}
         
-        Rank the products by their calculated probability.`,
+        IMPORTANT: Probabilities MUST be realistic estimates between 0.01 and 0.99. DO NOT return 0.0 unless the impurity is chemically impossible.
+        
+        Rank the products by their calculated Boltzmann probability (if available) or general probability.`,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -126,22 +186,8 @@ export async function predictInteraction(
               type: Type.ARRAY,
               items: {
                 type: Type.OBJECT,
-                properties: {
-                  iupacName: { type: Type.STRING },
-                  smiles: { type: Type.STRING },
-                  structureDescription: { type: Type.STRING },
-                  origin: { type: Type.STRING },
-                  probability: { type: Type.NUMBER },
-                  condition: { 
-                    type: Type.STRING, 
-                    enum: ["Oxidation", "Acidic Hydrolysis", "Basic Hydrolysis", "Photodegradation", "Thermal Degradation"] 
-                  },
-                  source: { 
-                    type: Type.STRING, 
-                    enum: ["Stress degradation", "Interaction with other compound"] 
-                  }
-                },
-                required: ["iupacName", "smiles", "structureDescription", "origin", "probability", "condition", "source"]
+                properties: impurityProperties,
+                required: requiredImpurityFields
               }
             }
           },

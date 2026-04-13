@@ -1,0 +1,64 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: compounds
+// Document ID: auto-generated or name-based
+// Fields:
+//   - name: string (required) - Common name
+//   - smiles: string (required) - SMILES string
+//   - category: string (optional) - Therapeutic category
+//   - createdAt: timestamp (optional)
+//
+// Collection: predictions
+// Document ID: auto-generated
+// Fields:
+//   - inputs: array (required) - List of input compounds
+//   - result: map (required) - The prediction result object
+//   - method: string (required) - Boltzmann, Heuristic, or Both
+//   - timestamp: timestamp (required)
+//   - userId: string (optional) - UID of the user who ran the prediction
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidCompound(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.smiles is string && data.smiles.size() > 0 && data.smiles.size() < 2000;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+             (request.auth.token.email == "ak5789248@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /compounds/{compoundId} {
+      // Allow public read/write for demo purposes since Auth is restricted
+      allow read, write: if true;
+    }
+
+    match /predictions/{predictionId} {
+      // Allow public read/write for demo purposes since Auth is restricted
+      allow read, write: if true;
+    }
+  }
+}
