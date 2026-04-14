@@ -1,6 +1,17 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const getApiKey = () => {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key || key === "TODO_KEYHERE") {
+    if (typeof window !== "undefined") {
+      console.error("GEMINI_API_KEY is missing. Please set it in your environment variables.");
+    }
+    return "MISSING_KEY";
+  }
+  return key;
+};
+
+const ai = new GoogleGenAI({ apiKey: getApiKey() });
 
 export interface CompoundInfo {
   name: string;
