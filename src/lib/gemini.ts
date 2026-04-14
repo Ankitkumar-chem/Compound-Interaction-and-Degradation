@@ -135,7 +135,7 @@ export async function predictInteraction(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-3-flash-preview",
       contents: `Predict and evaluate the degradation of Compound 1 in the following mixture using the ${method === "Both" ? "Heuristic AND Boltzmann" : method}-based approach:\n${compoundsInfo}`,
       config: {
         systemInstruction: `You are a professional pharmaceutical degradation evaluator. 
@@ -231,17 +231,31 @@ export async function predictInteraction(
     if (error.message?.includes("SAFETY")) {
       throw new AnalysisError("The input contains content that triggered safety filters. Please check your compound names or structures.", "SAFETY_TRIGGERED");
     }
-    if (error.message?.includes("quota") || error.message?.includes("429")) {
-      throw new AnalysisError("API rate limit reached. The free tier of Gemini has a limit on requests per minute. Please wait 60 seconds and try again.", "RATE_LIMIT");
+
+    // Check for rate limit (429) or quota errors
+    const isRateLimit = error.message?.includes("quota") || 
+                        error.message?.includes("429") || 
+                        error.status === 429 ||
+                        error.message?.toLowerCase().includes("rate limit");
+
+    if (isRateLimit) {
+      throw new AnalysisError("API rate limit reached. The free tier of Gemini has a limit on requests per minute. Please wait 60 seconds and try again. If this persists, it may be due to high global usage on the free tier.", "RATE_LIMIT");
     }
+
     if (error.message?.includes("network") || error.message?.includes("fetch")) {
       throw new AnalysisError("Network error. Please check your internet connection or try again later.", "NETWORK_ERROR");
     }
+    
     if (error.message?.includes("overloaded") || error.status === 503) {
       throw new AnalysisError("The AI model is currently overloaded. Please try again in a few seconds.", "MODEL_OVERLOADED");
     }
 
-    // Default error
-    throw new AnalysisError(error.message || "An unexpected error occurred during chemical analysis.", "UNKNOWN_ERROR");
+    if (error.message?.includes("API key not valid")) {
+      throw new AnalysisError("The Gemini API key is invalid. Please check your environment variables.", "INVALID_KEY");
+    }
+
+    // Default error with more context
+    const errorMessage = error.message || "An unexpected error occurred during chemical analysis.";
+    throw new AnalysisError(`${errorMessage} (Error Type: ${error.name || "Unknown"})`, "UNKNOWN_ERROR");
   }
 }

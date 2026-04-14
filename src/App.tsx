@@ -372,6 +372,7 @@ export default function App() {
                         onChange={async (e) => {
                           const val = e.target.value;
                           updateCompound(0, "value", val);
+                          setError(null);
                           
                           if (compounds[0].type === "Name" && val.length > 1) {
                             setShowSuggestions(0);
@@ -455,6 +456,7 @@ export default function App() {
                                 onChange={async (e) => {
                                   const val = e.target.value;
                                   updateCompound(actualIndex, "value", val);
+                                  setError(null);
                                   
                                   if (c.type === "Name" && val.length > 1) {
                                     setShowSuggestions(actualIndex);
