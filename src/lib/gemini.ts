@@ -4,13 +4,13 @@ const getApiKey = () => {
   // Try both standard and VITE_ prefixed variables
   const key = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
   
-  if (!key || key === "TODO_KEYHERE" || key === "MY_GEMINI_API_KEY" || key === "INVALID_OR_MISSING_KEY") {
+  if (!key || key === "INVALID_OR_MISSING_KEY") {
     if (typeof window !== "undefined") {
-      console.error("❌ GEMINI_API_KEY is missing or set to a placeholder.");
-      console.log("Current Key Value (masked):", key ? `${key.substring(0, 3)}...` : "undefined");
-      console.log("Please ensure you have set GEMINI_API_KEY or VITE_GEMINI_API_KEY in your environment variables.");
+      console.error("❌ GEMINI_API_KEY is missing.");
+      console.log("1. AI Studio: Click the gear icon (Settings) -> Secrets -> Add GEMINI_API_KEY.");
+      console.log("2. Vercel: Add VITE_GEMINI_API_KEY to your Project Settings and redeploy.");
     }
-    return "INVALID_OR_MISSING_KEY";
+    return "MISSING_KEY";
   }
   return key;
 };
