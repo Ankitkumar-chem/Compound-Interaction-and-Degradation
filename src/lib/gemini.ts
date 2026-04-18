@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { validateSmiles, validateSmarts, MolecularDescriptors } from "./rdkit";
 
 const getApiKey = () => {
   // Try both standard and VITE_ prefixed variables
@@ -22,6 +23,7 @@ export interface CompoundInfo {
   smiles: string;
   features: string[];
   interactionSites: string[];
+  molecularDescriptors?: MolecularDescriptors;
 }
 
 export interface PredictionResult {
@@ -39,6 +41,7 @@ export interface PredictionResult {
     relativeEnergy?: number;
     condition: "Oxidation" | "Acidic Hydrolysis" | "Basic Hydrolysis" | "Photodegradation" | "Thermal Degradation";
     source: "Stress degradation" | "Interaction with other compound";
+    molecularDescriptors?: MolecularDescriptors;
   }[];
 }
 
@@ -60,24 +63,26 @@ export interface CompoundInput {
 
 export async function predictInteraction(
   inputs: CompoundInput[],
-  method: PredictionMethod = "Heuristic"
+  method: PredictionMethod = "Heuristic",
+  history: any[] = []
 ): Promise<PredictionResult> {
-  // Pre-validation
+  // Pre-validation with RDKit
   for (const input of inputs) {
     if (input.type === "SMILES") {
       const smiles = input.value.trim();
-      if (smiles.includes(" ")) {
-        throw new AnalysisError("SMILES strings cannot contain spaces. Please check your input.", "INVALID_SMILES");
+      const validation = await validateSmiles(smiles);
+      if (!validation.isValid) {
+        throw new AnalysisError(validation.error || "Invalid chemical structure", "INVALID_SMILES");
       }
-      // Basic parenthesis check
-      let balance = 0;
-      for (const char of smiles) {
-        if (char === "(") balance++;
-        if (char === ")") balance--;
-        if (balance < 0) break;
+      // Use canonical SMILES for better model performance
+      if (validation.canonicalSmiles) {
+        input.value = validation.canonicalSmiles;
       }
-      if (balance !== 0) {
-        throw new AnalysisError("The SMILES string has unbalanced parentheses. Please check the chemical structure.", "INVALID_SMILES");
+    } else if (input.type === "SMARTS") {
+      const smarts = input.value.trim();
+      const validation = await validateSmarts(smarts);
+      if (!validation.isValid) {
+        throw new AnalysisError(validation.error || "Invalid SMARTS pattern", "INVALID_SMARTS");
       }
     }
   }
@@ -85,6 +90,16 @@ export async function predictInteraction(
   const compoundsInfo = inputs
     .map((input, i) => `Compound ${i + 1}: "${input.value}" (provided as ${input.type})`)
     .join("\n    ");
+
+  let historyContext = "";
+  if (history && history.length > 0) {
+    historyContext = "\nREFERENCE HISTORICAL DATA (LEARN FROM THESE PREVIOUS ANALYSES):\n" + 
+      history.map((h, index) => {
+        const inputStr = h.inputs?.map((inp: any, i: number) => `Input ${i+1}: ${inp.value}`).join(", ");
+        const resultSummary = h.result?.degradationImpurities?.slice(0, 3).map((imp: any) => `${imp.iupacName} (prob: ${imp.probability})`).join("; ");
+        return `Example ${index+1}: [Inputs: ${inputStr}] -> [Top Impurities: ${resultSummary || "N/A"}]`;
+      }).join("\n");
+  }
 
   let probabilityInstruction = "";
   if (method === "Boltzmann") {
@@ -143,6 +158,8 @@ export async function predictInteraction(
         
         1. HEURISTIC ANALYSIS: Based on expert chemical reasoning, reactive site identification, and known reaction kinetics.
         2. BOLTZMANN ANALYSIS: Based on thermodynamic stability and calculated relative formation energy (ΔG) at 298K.
+        
+        ${historyContext}
         
         When "Both" is selected, you must perform these two analyses independently for each predicted impurity to provide a comparative perspective.
         
@@ -239,23 +256,23 @@ export async function predictInteraction(
                         error.message?.toLowerCase().includes("rate limit");
 
     if (isRateLimit) {
-      throw new AnalysisError("API rate limit reached. The free tier of Gemini has a limit on requests per minute. Please wait 60 seconds and try again. If this persists, it may be due to high global usage on the free tier.", "RATE_LIMIT");
+      throw new AnalysisError("The daily request quota for the Gemini API has been reached or you are sending requests too quickly. Please wait 60 seconds and try again.", "QUOTA_EXCEEDED");
     }
 
     if (error.message?.includes("network") || error.message?.includes("fetch")) {
-      throw new AnalysisError("Network error. Please check your internet connection or try again later.", "NETWORK_ERROR");
+      throw new AnalysisError("A network connection issue was detected. Please check your internet connection and verify that the API is reachable.", "CONNECTION_ERROR");
     }
     
     if (error.message?.includes("overloaded") || error.status === 503) {
-      throw new AnalysisError("The AI model is currently overloaded. Please try again in a few seconds.", "MODEL_OVERLOADED");
+      throw new AnalysisError("The AI engine is currently experiencing high volume and is temporarily overloaded. Please try your request again in a few moments.", "MODEL_OVERLOADED");
     }
 
     if (error.message?.includes("API key not valid")) {
-      throw new AnalysisError("The Gemini API key is invalid. Please check your environment variables.", "INVALID_KEY");
+      throw new AnalysisError("The configured Gemini API key is invalid or has been revoked. Please verify your credentials in the Settings menu.", "CONFIG_ERROR");
     }
 
     // Default error with more context
-    const errorMessage = error.message || "An unexpected error occurred during chemical analysis.";
-    throw new AnalysisError(`${errorMessage} (Error Type: ${error.name || "Unknown"})`, "UNKNOWN_ERROR");
+    const errorMessage = error.message || "An analytical failure occurred while processing the molecular structures.";
+    throw new AnalysisError(`${errorMessage}`, "UNKNOWN_ERROR");
   }
 }

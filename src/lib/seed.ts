@@ -260,91 +260,31 @@ const ADDITIONAL_NAMES: [string, string][] = [
   ["Zinc sulfate", "Vitamins & Nutritional"], ["Potassium chloride", "Vitamins & Nutritional"]
 ];
 
-export async function cleanupDuplicates() {
-  console.log('Checking for duplicates in compounds...');
-  const compoundsRef = collection(db, 'compounds');
-  const snap = await getDocs(compoundsRef);
-  
-  const seen = new Set<string>();
-  const duplicates: string[] = [];
-  
-  snap.docs.forEach(doc => {
-    const name = doc.data().name?.toLowerCase()?.trim();
-    if (name && seen.has(name)) {
-      duplicates.push(doc.id);
-    } else if (name) {
-      seen.add(name);
-    }
-  });
-  
-  if (duplicates.length > 0) {
-    console.log(`Found ${duplicates.length} duplicates. Deleting...`);
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < duplicates.length; i += CHUNK_SIZE) {
-      const chunk = duplicates.slice(i, i + CHUNK_SIZE);
-      const batch = writeBatch(db);
-      chunk.forEach(id => {
-        batch.delete(doc(db, 'compounds', id));
-      });
-      await batch.commit();
-    }
-    console.log('Cleanup complete.');
-  } else {
-    console.log('No duplicates found.');
-  }
-}
-
 export async function seedDatabase() {
   const compoundsRef = collection(db, 'compounds');
   
-  // Get existing count
-  const existingSnap = await getDocs(compoundsRef);
-  
-  // If we already have a large number of compounds AND they don't have categories, skip
-  const firstDoc = existingSnap.docs[0];
-  if (existingSnap.size > 500 && firstDoc && !firstDoc.data().category) {
-    console.log('Database already contains full library without categories. Checking for duplicates...');
-    await cleanupDuplicates();
-    return;
-  }
-  
-  console.log('Clearing existing compounds for fresh update...');
-  const deleteBatch = writeBatch(db);
-  existingSnap.docs.forEach(doc => {
-    deleteBatch.delete(doc.ref);
-  });
-  await deleteBatch.commit();
+  // Quick check - only seed if the database is functionally empty
+  const existingSnap = await getDocs(query(compoundsRef, limit(1)));
+  if (!existingSnap.empty) return;
 
-  console.log('Seeding database with full library...');
+  console.log('Initializing database library...');
   
-  // Combine known SMILES with additional names
   const finalMap = new Map<string, string>();
-  
-  // First add known ones
-  API_DATA.forEach(([name, _, smiles]) => {
-    finalMap.set(name, smiles);
-  });
-  
-  // Then add additional ones if they don't exist
+  API_DATA.forEach(([name, _, smiles]) => finalMap.set(name, smiles));
   ADDITIONAL_NAMES.forEach(([name, _]) => {
-    if (!finalMap.has(name)) {
-      finalMap.set(name, "");
-    }
+    if (!finalMap.has(name)) finalMap.set(name, "");
   });
 
   const finalArray = Array.from(finalMap.entries());
-  
-  // Firestore batches are limited to 500 operations.
   const CHUNK_SIZE = 400;
+  
   for (let i = 0; i < finalArray.length; i += CHUNK_SIZE) {
     const chunk = finalArray.slice(i, i + CHUNK_SIZE);
     const batch = writeBatch(db);
     
     chunk.forEach(([name, smiles]) => {
-      // Use a sanitized version of the name as ID to prevent duplicates
       const docId = name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const docRef = doc(db, 'compounds', docId);
-      batch.set(docRef, {
+      batch.set(doc(db, 'compounds', docId), {
         name,
         smiles,
         createdAt: new Date().toISOString()
@@ -352,8 +292,5 @@ export async function seedDatabase() {
     });
     
     await batch.commit();
-    console.log(`Seeded chunk ${i / CHUNK_SIZE + 1}`);
   }
-
-  console.log('Seeding complete.');
 }

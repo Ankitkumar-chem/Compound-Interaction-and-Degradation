@@ -28,11 +28,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { predictInteraction, PredictionResult, InputType, CompoundInput, AnalysisError, PredictionMethod } from "@/src/lib/gemini";
 import { ChemicalStructure } from "@/src/components/ChemicalStructure";
-import { Plus, Trash2, AlertCircle, WifiOff } from "lucide-react";
+import { initRDKit, getMolecularDescriptors } from "@/src/lib/rdkit";
+import { sanitizeData } from "@/src/lib/firestore-utils";
+import { Plus, Trash2, AlertCircle, WifiOff, Clock, Lock } from "lucide-react";
 import { useRef } from "react";
 import * as XLSX from "xlsx";
 import { db, auth } from "@/src/lib/firebase";
-import { collection, addDoc, setDoc, doc, serverTimestamp, getDocs, query, orderBy, limit, where } from "firebase/firestore";
+import { collection, addDoc, setDoc, doc, serverTimestamp, getDocs, query, orderBy, limit, where, getCountFromServer } from "firebase/firestore";
 import { signInAnonymously, onAuthStateChanged } from "firebase/auth";
 import { seedDatabase } from "@/src/lib/seed";
 
@@ -57,21 +59,52 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState<number | null>(null);
   const [dbStats, setDbStats] = useState({ compounds: 0, predictions: 0 });
 
+  // Debounced Search Effect
   useEffect(() => {
-    // Initialize Firebase Seed and suggestions
+    if (showSuggestions === null) return;
+    
+    const activeCompound = compounds[showSuggestions];
+    if (!activeCompound || activeCompound.type !== "Name" || activeCompound.value.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const val = activeCompound.value;
+        const q = query(
+          collection(db, "compounds"), 
+          where("name", ">=", val),
+          where("name", "<=", val + "\uf8ff"),
+          limit(5)
+        );
+        const snap = await getDocs(q);
+        setSuggestions(snap.docs.map(d => d.data()));
+      } catch (err) {
+        console.error("Search Error:", err);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [showSuggestions, compounds]);
+
+  useEffect(() => {
+    // Initialize Firebase Seed and stats
     const init = async () => {
       try {
         await seedDatabase();
+        initRDKit().catch(console.error); 
         
-        // Fetch Stats immediately after seeding to show updated counts
-        const compoundsSnap = await getDocs(collection(db, "compounds"));
-        const predictionsSnap = await getDocs(collection(db, "predictions"));
+        // Fetch Stats using efficient count aggregation
+        const compoundsCount = await getCountFromServer(collection(db, "compounds"));
+        const predictionsCount = await getCountFromServer(collection(db, "predictions"));
+        
         setDbStats({
-          compounds: compoundsSnap.size,
-          predictions: predictionsSnap.size
+          compounds: compoundsCount.data().count,
+          predictions: predictionsCount.data().count
         });
       } catch (e) {
-        console.error("Firebase Init Error:", e);
+        console.error("Initialization Error:", e);
       }
     };
 
@@ -104,7 +137,7 @@ export default function App() {
     selectedMethods.size === 2 ? "Both" : 
     selectedMethods.has("Boltzmann") ? "Boltzmann" : 
     selectedMethods.has("Heuristic") ? "Heuristic" : 
-    "Heuristic"; // Fallback to Heuristic as "normal"
+    "Heuristic";
 
   const addCompound = () => {
     if (compounds.length < 5) {
@@ -134,16 +167,51 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const prediction = await predictInteraction(validInputs, predictionMethod);
+      // Fetch recent history to "train" (few-shot) the model
+      let history: any[] = [];
+      try {
+        const historyQuery = query(
+          collection(db, "predictions"),
+          orderBy("timestamp", "desc"),
+          limit(5)
+        );
+        const historySnap = await getDocs(historyQuery);
+        history = historySnap.docs.map(doc => doc.data());
+      } catch (historyErr) {
+        console.warn("Failed to fetch prediction history for model refinement:", historyErr);
+      }
+
+      const prediction = await predictInteraction(validInputs, predictionMethod, history);
+      
+      // Calculate real molecular descriptors (Molecular Weight) using RDKit in parallel
+      await Promise.all([
+        ...prediction.compounds.map(async (comp) => {
+          if (comp.smiles) {
+            const descriptors = await getMolecularDescriptors(comp.smiles);
+            if (descriptors) {
+              comp.molecularDescriptors = descriptors;
+            }
+          }
+        }),
+        ...prediction.degradationImpurities.map(async (impurity) => {
+          if (impurity.smiles) {
+            const descriptors = await getMolecularDescriptors(impurity.smiles);
+            if (descriptors) {
+              impurity.molecularDescriptors = descriptors;
+            }
+          }
+        })
+      ]);
+
       setResult(prediction);
 
       // Save prediction to Firebase
-      await addDoc(collection(db, "predictions"), {
+      await addDoc(collection(db, "predictions"), sanitizeData({
         inputs: validInputs,
         result: prediction,
         method: predictionMethod,
         timestamp: serverTimestamp()
-      });
+      }));
 
       // Add new compounds to database if they don't exist
       for (const comp of prediction.compounds) {
@@ -176,12 +244,12 @@ export default function App() {
         }
       }
 
-      // Refresh stats
-      const compoundsSnap = await getDocs(collection(db, "compounds"));
-      const predictionsSnap = await getDocs(collection(db, "predictions"));
+      // Refresh stats efficiently
+      const compoundsCount = await getCountFromServer(collection(db, "compounds"));
+      const predictionsCount = await getCountFromServer(collection(db, "predictions"));
       setDbStats({
-        compounds: compoundsSnap.size,
-        predictions: predictionsSnap.size
+        compounds: compoundsCount.data().count,
+        predictions: predictionsCount.data().count
       });
 
     } catch (err: any) {
@@ -214,12 +282,13 @@ export default function App() {
 
       // 1. Compounds Section
       rows.push(["INPUT COMPOUNDS"]);
-      rows.push(["Role", "Name", "SMILES", "Features", "Interaction Sites"]);
+      rows.push(["Role", "Name", "SMILES", "MW (g/mol)", "Features", "Interaction Sites"]);
       result.compounds.forEach((c, idx) => {
         rows.push([
           idx === 0 ? "Primary" : "Secondary",
           c.name,
           c.smiles,
+          c.molecularDescriptors?.MolWt != null ? c.molecularDescriptors.MolWt.toFixed(2) : "N/A",
           c.features.join(", "),
           c.interactionSites?.join(", ") || "N/A"
         ]);
@@ -229,10 +298,10 @@ export default function App() {
       // 2. Impurities Section
       if (result.degradationImpurities && result.degradationImpurities.length > 0) {
         rows.push(["PREDICTED DEGRADATION IMPURITIES"]);
-        const hasEnergy = result.degradationImpurities.some(i => i.relativeEnergy !== undefined);
-        const hasBoth = result.degradationImpurities.some(i => i.probabilityHeuristic !== undefined);
+        const hasEnergy = result.degradationImpurities.some(i => i.relativeEnergy != null);
+        const hasBoth = result.degradationImpurities.some(i => i.probabilityHeuristic != null);
         
-        const header = ["IUPAC Name", "SMILES", "Main Probability (%)"];
+        const header = ["IUPAC Name", "SMILES", "MW (g/mol)", "Main Probability (%)"];
         if (hasBoth) {
           header.push("Heuristic (%)", "Boltzmann (%)");
         }
@@ -241,20 +310,21 @@ export default function App() {
         rows.push(header);
 
         [...result.degradationImpurities]
-          .sort((a, b) => b.probability - a.probability)
+          .sort((a, b) => (b.probability || 0) - (a.probability || 0))
           .forEach(i => {
             const row = [
               i.iupacName,
               i.smiles,
-              (i.probability * 100).toFixed(1)
+              i.molecularDescriptors?.MolWt != null ? i.molecularDescriptors.MolWt.toFixed(2) : "N/A",
+              i.probability != null ? (i.probability * 100).toFixed(1) : "N/A"
             ];
             if (hasBoth) {
               row.push(
-                i.probabilityHeuristic ? (i.probabilityHeuristic * 100).toFixed(1) : "N/A",
-                i.probabilityBoltzmann ? (i.probabilityBoltzmann * 100).toFixed(1) : "N/A"
+                i.probabilityHeuristic != null ? (i.probabilityHeuristic * 100).toFixed(1) : "N/A",
+                i.probabilityBoltzmann != null ? (i.probabilityBoltzmann * 100).toFixed(1) : "N/A"
               );
             }
-            if (hasEnergy) row.push(i.relativeEnergy?.toFixed(2) || "N/A");
+            if (hasEnergy) row.push(i.relativeEnergy != null ? i.relativeEnergy.toFixed(2) : "N/A");
             row.push(
               i.origin,
               i.condition,
@@ -369,30 +439,14 @@ export default function App() {
                         placeholder={compounds[0].type === "Name" ? "e.g., Aspirin" : `Enter ${compounds[0].type}...`}
                         value={compounds[0].value}
                         autoComplete="off"
-                        onChange={async (e) => {
+                        onChange={(e) => {
                           const val = e.target.value;
                           updateCompound(0, "value", val);
                           setError(null);
-                          
                           if (compounds[0].type === "Name" && val.length > 1) {
                             setShowSuggestions(0);
-                            // Intelligent suggestion based on database
-                            try {
-                              const q = query(
-                                collection(db, "compounds"), 
-                                where("name", ">=", val),
-                                where("name", "<=", val + "\uf8ff"),
-                                limit(5)
-                              );
-                              const snap = await getDocs(q);
-                              // Only update if this input is still the active one
-                              setSuggestions(snap.docs.map(d => d.data()));
-                            } catch (err) {
-                              console.error("Suggestion fetch error:", err);
-                            }
                           } else {
                             setShowSuggestions(null);
-                            setSuggestions([]);
                           }
                         }}
                         required
@@ -453,28 +507,15 @@ export default function App() {
                                 placeholder={c.type === "Name" ? "e.g., Lactose" : `Enter ${c.type}...`}
                                 value={c.value}
                                 autoComplete="off"
-                                onChange={async (e) => {
+                                onChange={(e) => {
                                   const val = e.target.value;
                                   updateCompound(actualIndex, "value", val);
                                   setError(null);
                                   
                                   if (c.type === "Name" && val.length > 1) {
                                     setShowSuggestions(actualIndex);
-                                    try {
-                                      const q = query(
-                                        collection(db, "compounds"), 
-                                        where("name", ">=", val),
-                                        where("name", "<=", val + "\uf8ff"),
-                                        limit(5)
-                                      );
-                                      const snap = await getDocs(q);
-                                      setSuggestions(snap.docs.map(d => d.data()));
-                                    } catch (err) {
-                                      console.error("Suggestion fetch error:", err);
-                                    }
                                   } else {
                                     setShowSuggestions(null);
-                                    setSuggestions([]);
                                   }
                                 }}
                                 className="bg-white h-8 text-xs"
@@ -645,32 +686,36 @@ export default function App() {
                 <Alert variant="destructive" className="border-red-200 bg-red-50">
                   <div className="flex gap-3">
                     <div className="mt-0.5">
-                      {error.type === "RATE_LIMIT" && <RefreshCw className="h-5 w-5 text-red-600 animate-spin-slow" />}
+                      {(error.type === "QUOTA_EXCEEDED" || error.type === "MODEL_OVERLOADED") && <Clock className="h-5 w-5 text-red-600 animate-pulse" />}
                       {error.type === "SAFETY_TRIGGERED" && <ShieldAlert className="h-5 w-5 text-red-600" />}
-                      {error.type === "NETWORK_ERROR" && <WifiOff className="h-5 w-5 text-red-600" />}
-                      {(error.type === "INVALID_SMILES" || error.type === "INVALID_JSON") && <AlertCircle className="h-5 w-5 text-red-600" />}
+                      {error.type === "CONNECTION_ERROR" && <WifiOff className="h-5 w-5 text-red-600" />}
+                      {(error.type === "INVALID_SMILES" || error.type === "INVALID_SMARTS" || error.type === "INVALID_JSON") && <AlertCircle className="h-5 w-5 text-red-600" />}
+                      {error.type === "CONFIG_ERROR" && <Lock className="h-5 w-5 text-red-600" />}
                       {error.type === "UNKNOWN_ERROR" && <AlertTriangle className="h-5 w-5 text-red-600" />}
                     </div>
                     <div className="space-y-1">
                       <AlertTitle className="text-red-800 font-bold">
-                        {error.type === "RATE_LIMIT" ? "Rate Limit Reached" : 
-                         error.type === "SAFETY_TRIGGERED" ? "Safety Filter Triggered" :
-                         error.type === "INVALID_SMILES" ? "Invalid Input Structure" :
-                         error.type === "NETWORK_ERROR" ? "Connection Issue" :
-                         "Analysis Error"}
+                        {error.type === "QUOTA_EXCEEDED" ? "API Quota Exceeded" : 
+                         error.type === "MODEL_OVERLOADED" ? "Model Temporarily Overloaded" :
+                         error.type === "SAFETY_TRIGGERED" ? "Safety Filter Logic Engaged" :
+                         error.type === "INVALID_SMILES" || error.type === "INVALID_SMARTS" ? "Structural Format Error" :
+                         error.type === "CONNECTION_ERROR" ? "Network Communication Failure" :
+                         error.type === "CONFIG_ERROR" ? "Configuration Credential Error" :
+                         error.type === "INVALID_JSON" ? "Structure Interpretation Failure" :
+                         "Analytical Processing Error"}
                       </AlertTitle>
                       <AlertDescription className="text-red-700">
                         {error.message}
                       </AlertDescription>
-                      {error.type === "RATE_LIMIT" && (
+                      {(error.type === "QUOTA_EXCEEDED" || error.type === "MODEL_OVERLOADED" || error.type === "CONNECTION_ERROR") && (
                         <Button 
                           variant="outline" 
                           size="sm" 
-                          onClick={handlePredict}
+                          onClick={(e) => handlePredict(e as any)}
                           className="mt-3 border-red-200 text-red-700 hover:bg-red-100"
                         >
                           <RefreshCw className="mr-2 h-3 w-3" />
-                          Retry Now
+                          Retry Analytical Operation
                         </Button>
                       )}
                     </div>
@@ -731,6 +776,11 @@ export default function App() {
                             </div>
                             <div className="font-mono text-[11px] text-[#94a3b8] break-all leading-relaxed" title={compound.smiles}>{compound.smiles}</div>
                             <div className="flex flex-wrap gap-2 pt-2">
+                              {compound.molecularDescriptors && (
+                                <Badge variant="outline" className="bg-[#f8fafc] text-[#64748b] border-slate-200 text-[10px] py-0 px-2 font-mono">
+                                  Molecular Weight: {compound.molecularDescriptors.MolWt != null ? compound.molecularDescriptors.MolWt.toFixed(2) : "N/A"}
+                                </Badge>
+                              )}
                               {compound.features.map((feature, i) => (
                                 <Badge key={`feature-${idx}-${i}`} variant="outline" className="bg-[#f8fafc] text-[#475569] border-slate-200 text-[10px] py-0 px-2">
                                   {feature}
@@ -787,13 +837,13 @@ export default function App() {
                                       </div>
                                     </div>
                                     <div className="text-right space-y-1">
-                                      <div className="text-lg font-bold text-[#4f46e5]">{(impurity.probability * 100).toFixed(1)}%</div>
-                                      {impurity.probabilityHeuristic !== undefined && impurity.probabilityBoltzmann !== undefined && (
+                                      <div className="text-lg font-bold text-[#4f46e5]">{impurity.probability != null ? (impurity.probability * 100).toFixed(1) : "N/A"}%</div>
+                                      {impurity.probabilityHeuristic != null && impurity.probabilityBoltzmann != null && (
                                         <div className="text-[9px] font-medium text-slate-400 uppercase tracking-tighter">
                                           H: {(impurity.probabilityHeuristic * 100).toFixed(1)}% | B: {(impurity.probabilityBoltzmann * 100).toFixed(1)}%
                                         </div>
                                       )}
-                                      {impurity.relativeEnergy !== undefined && (
+                                      {impurity.relativeEnergy != null && (
                                         <div className="text-[10px] font-mono text-slate-400">
                                           ΔG: {impurity.relativeEnergy.toFixed(2)} kcal/mol
                                         </div>
@@ -801,6 +851,16 @@ export default function App() {
                                     </div>
                                   </div>
                                   <div className="text-sm text-[#475569] leading-relaxed">{impurity.structureDescription}</div>
+                                  
+                                  {impurity.molecularDescriptors && (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                                      <div className="bg-[#f8fafc] border border-slate-100 rounded p-2 text-center">
+                                        <div className="text-[9px] uppercase text-slate-400 font-bold mb-0.5">Molecular Weight</div>
+                                        <div className="text-xs font-mono font-bold text-slate-700">{impurity.molecularDescriptors.MolWt != null ? impurity.molecularDescriptors.MolWt.toFixed(2) : "N/A"}</div>
+                                      </div>
+                                    </div>
+                                  )}
+
                                   <div className="flex flex-wrap gap-3 pt-2">
                                     <div className="text-[10px] bg-[#eef2ff] text-[#4338ca] px-3 py-1 rounded-full font-semibold uppercase tracking-wider">
                                       {impurity.origin}
