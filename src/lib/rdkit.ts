@@ -9,10 +9,14 @@ interface RDKitMolecule {
   delete: () => void;
   get_inchi?: () => string;
   get_descriptors: () => string;
+  get_svg: (width?: number, height?: number) => string;
 }
 
 export interface MolecularDescriptors {
   MolWt?: number;
+  MolLogP?: number;
+  TPSA?: number;
+  NumRotatableBonds?: number;
 }
 
 let rdkitModule: RDKitModule | null = null;
@@ -75,6 +79,30 @@ export async function validateSmiles(smiles: string): Promise<{ isValid: boolean
   }
 }
 
+export async function getMoleculeSvg(smiles: string, width: number = 200, height: number = 200): Promise<string | null> {
+  try {
+    const rdkit = await initRDKit();
+    const cleanInputSmiles = smiles.trim().replace(/\s+/g, '');
+    const mol = rdkit.get_mol(cleanInputSmiles);
+    
+    if (!mol) return null;
+    
+    const isValid = mol.is_valid();
+    if (!isValid) {
+      mol.delete();
+      return null;
+    }
+    
+    // RDKit minimal get_svg takes width and height parameters directly
+    const svg = mol.get_svg(width, height);
+    mol.delete();
+    
+    return svg;
+  } catch (err) {
+    console.error("RDKit SVG Generation Error:", err);
+    return null;
+  }
+}
 export async function validateSmarts(smarts: string): Promise<{ isValid: boolean; error?: string }> {
   try {
     const rdkit = await initRDKit();
@@ -105,14 +133,44 @@ export async function getMolecularDescriptors(smiles: string): Promise<Molecular
     const raw = JSON.parse(descriptorsJson);
     mol.delete();
     
-    // Normalize keys - only keep Molecular Weight as requested
+    // Normalize keys - extracting MolWt, LogP, TPSA, and RotatableBonds
     const normalized: MolecularDescriptors = {
       MolWt: raw.MolWt ?? raw.amw ?? raw.MolWeight ?? raw.mw,
+      MolLogP: raw.MolLogP ?? raw.logp ?? raw.CrippenClogP,
+      TPSA: raw.TPSA ?? raw.tpsa,
+      NumRotatableBonds: raw.NumRotatableBonds ?? raw.numRotatableBonds ?? raw.rotatableBonds,
     };
     
     return normalized;
   } catch (err) {
     console.error("RDKit Descriptors Error:", err);
+    return null;
+  }
+}
+
+export async function computeStrainEnergy(smiles: string): Promise<number | null> {
+  try {
+    const rdkit = await initRDKit();
+    let mol = rdkit.get_mol(smiles);
+    if (!mol || !mol.is_valid()) {
+      if (mol) mol.delete();
+      return null;
+    }
+    
+    let energy = null;
+    if (typeof (mol as any).add_hs === 'function') {
+      (mol as any).add_hs();
+    }
+    
+    // Some RDKit WASM builds expose an optimization or force field API
+    if (typeof (mol as any).optimize_geometry === 'function') {
+       const res = (mol as any).optimize_geometry(); // returns energy
+       if (typeof res === 'number') energy = res;
+    }
+
+    mol.delete();
+    return typeof energy === 'number' ? energy : null;
+  } catch(e) {
     return null;
   }
 }

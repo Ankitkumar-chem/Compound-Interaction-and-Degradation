@@ -1,4 +1,5 @@
-import { FieldValue } from "firebase/firestore";
+import { FieldValue, doc, updateDoc } from "firebase/firestore";
+import { db } from './firebase';
 
 /**
  * Recursively removes undefined values from an object, which Firestore doesn't support.
@@ -31,4 +32,12 @@ export function sanitizeData(data: any): any {
   }
 
   return data;
+}
+
+/**
+ * Updates a compound's SMILES string in Firestore.
+ */
+export async function updateCompoundSmiles(docId: string, smiles: string) {
+  const compoundRef = doc(db, 'compounds', docId);
+  await updateDoc(compoundRef, { smiles });
 }

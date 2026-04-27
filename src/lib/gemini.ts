@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { parse as parsePartial } from 'partial-json';
 import { validateSmiles, validateSmarts, MolecularDescriptors } from "./rdkit";
 
 const getApiKey = () => {
@@ -27,6 +28,7 @@ export interface CompoundInfo {
 }
 
 export interface PredictionResult {
+  chainOfThought: string;
   compounds: CompoundInfo[];
   interactionType: "Physical" | "Chemical" | "None";
   mechanism: string;
@@ -41,6 +43,7 @@ export interface PredictionResult {
     relativeEnergy?: number;
     condition: "Oxidation" | "Acidic Hydrolysis" | "Basic Hydrolysis" | "Photodegradation" | "Thermal Degradation";
     source: "Stress degradation" | "Interaction with other compound";
+    mechanismExplanation: string;
     molecularDescriptors?: MolecularDescriptors;
   }[];
 }
@@ -59,12 +62,14 @@ export class AnalysisError extends Error {
 export interface CompoundInput {
   value: string;
   type: InputType;
+  descriptors?: MolecularDescriptors | null;
+  originalName?: string;
 }
 
 export async function predictInteraction(
   inputs: CompoundInput[],
   method: PredictionMethod = "Heuristic",
-  history: any[] = []
+  onChunk?: (partialResult: Partial<PredictionResult>) => void
 ): Promise<PredictionResult> {
   // Pre-validation with RDKit
   for (const input of inputs) {
@@ -88,18 +93,17 @@ export async function predictInteraction(
   }
 
   const compoundsInfo = inputs
-    .map((input, i) => `Compound ${i + 1}: "${input.value}" (provided as ${input.type})`)
+    .map((input, i) => {
+      let desc = "";
+      if (input.descriptors) {
+         desc = ` [Calculated Specs: MolWt: ${input.descriptors.MolWt?.toFixed(2) || 'N/A'}, LogP: ${input.descriptors.MolLogP?.toFixed(2) || 'N/A'}, TPSA: ${input.descriptors.TPSA?.toFixed(2) || 'N/A'}, Rotatable Bonds: ${input.descriptors.NumRotatableBonds ?? 'N/A'}]`;
+      }
+      const compoundTargetName = input.originalName || (input.type === "Name" ? input.value : `Compound ${i + 1}`);
+      const rawType = input.type === "SMILES" ? `SMILES Structure Data: ${input.value}` : `"${input.value}" (provided as Name)`;
+      const constraint = ` The user specifically named this compound "${compoundTargetName}". You MUST strictly fill out the 'name' field using exactly "${compoundTargetName}"... DO NOT under any circumstances output 'Compound ${i + 1}' or its IUPAC name for the Input Compound name.`;
+      return `Compound ${i + 1}: ${rawType}.${constraint}${desc}`;
+    })
     .join("\n    ");
-
-  let historyContext = "";
-  if (history && history.length > 0) {
-    historyContext = "\nREFERENCE HISTORICAL DATA (LEARN FROM THESE PREVIOUS ANALYSES):\n" + 
-      history.map((h, index) => {
-        const inputStr = h.inputs?.map((inp: any, i: number) => `Input ${i+1}: ${inp.value}`).join(", ");
-        const resultSummary = h.result?.degradationImpurities?.slice(0, 3).map((imp: any) => `${imp.iupacName} (prob: ${imp.probability})`).join("; ");
-        return `Example ${index+1}: [Inputs: ${inputStr}] -> [Top Impurities: ${resultSummary || "N/A"}]`;
-      }).join("\n");
-  }
 
   let probabilityInstruction = "";
   if (method === "Boltzmann") {
@@ -111,10 +115,13 @@ export async function predictInteraction(
   }
 
   const impurityProperties: any = {
-    iupacName: { type: Type.STRING },
-    smiles: { type: Type.STRING },
+    iupacName: { type: Type.STRING, description: "The IUPAC name or common name of the NEW DEGRADATION PRODUCT. DO NOT just output the parent compound name. You must name the new impurity generated." },
+    smiles: { 
+      type: Type.STRING, 
+      description: "SMILES string of the newly formed degradant. CRITICAL WARNING: You must mathematically ensure standard valence rules are obeyed. Do not attach 5 bonds to Carbon. RDKit will fail to parse this if valences are exceeded."
+    },
     structureDescription: { type: Type.STRING },
-    origin: { type: Type.STRING },
+    origin: { type: Type.STRING, description: "Which specific compound(s) this impurity originated from. E.g. 'Compound 1 and Compound 2'" },
     probability: { 
       type: Type.NUMBER, 
       description: "Primary probability of formation as a decimal between 0.0 and 1.0 (e.g., 0.85 for 85%). Used for ranking." 
@@ -126,10 +133,14 @@ export async function predictInteraction(
     source: { 
       type: Type.STRING, 
       enum: ["Stress degradation", "Interaction with other compound"] 
+    },
+    mechanismExplanation: {
+      type: Type.STRING,
+      description: "Brief explanation of the interaction mechanism (e.g., pH change, oxidation, complexation, adsorption, precipitation). Mention effects on stability or release kinetics."
     }
   };
 
-  const requiredImpurityFields = ["iupacName", "smiles", "structureDescription", "origin", "probability", "condition", "source"];
+  const requiredImpurityFields = ["iupacName", "smiles", "structureDescription", "origin", "probability", "condition", "source", "mechanismExplanation"];
 
   if (method === "Boltzmann" || method === "Both") {
     impurityProperties.relativeEnergy = { type: Type.NUMBER, description: "Relative formation energy in kcal/mol" };
@@ -149,19 +160,16 @@ export async function predictInteraction(
   }
 
   try {
-    const response = await ai.models.generateContent({
+    const responseStream = await ai.models.generateContentStream({
       model: "gemini-3-flash-preview",
       contents: `Predict and evaluate the degradation of Compound 1 in the following mixture using the ${method === "Both" ? "Heuristic AND Boltzmann" : method}-based approach:\n${compoundsInfo}`,
       config: {
         systemInstruction: `You are a professional pharmaceutical degradation evaluator. 
-        Your task is to predict the degradation of Compound 1 using two distinct and independent analytical frameworks:
+        Your task is to predict the degradation of Compound 1 using the following analytical framework${method === "Both" ? "s" : ""}:
+        ${method === "Heuristic" || method === "Both" ? "\n        1. HEURISTIC ANALYSIS: Based on expert chemical reasoning, reactive site identification, and known reaction kinetics." : ""}
+        ${method === "Boltzmann" || method === "Both" ? `\n        ${method === "Both" ? "2." : "1."} BOLTZMANN ANALYSIS: Based on thermodynamic stability and calculated relative formation energy (ΔG) at 298K.` : ""}
         
-        1. HEURISTIC ANALYSIS: Based on expert chemical reasoning, reactive site identification, and known reaction kinetics.
-        2. BOLTZMANN ANALYSIS: Based on thermodynamic stability and calculated relative formation energy (ΔG) at 298K.
-        
-        ${historyContext}
-        
-        When "Both" is selected, you must perform these two analyses independently for each predicted impurity to provide a comparative perspective.
+        ${method === "Both" ? "When \"Both\" is selected, you must perform these two analyses independently for each predicted impurity to provide a comparative perspective." : ""}
         
         Evaluate the degradation of Compound 1 due to:
         1. Stress degradation of Compound 1.
@@ -176,7 +184,7 @@ export async function predictInteraction(
         
         First, identify the chemical structures correctly for ALL provided compounds.
         For each compound, provide:
-        - Identified name.
+        - Identified name (If the user explicitly provided a name, you MUST echo their exact original name back to them. DO NOT rename it to IUPAC or another common name).
         - SMILES string (MUST be a valid, standard, canonical SMILES string compatible with RDKit and PubChem).
         - List of key structural features.
         - List of specific "Interaction Sites" likely to be involved in degradation.
@@ -185,7 +193,9 @@ export async function predictInteraction(
         For each product, you MUST specify:
         - Whether it forms from "Stress degradation" or "Interaction with other compound".
         - Which specific condition it forms under.
-        - IUPAC name, SMILES string (MUST be valid, canonical).
+        - IUPAC name of the NEW DEGRADANT (do NOT just repeat the starting material's name. You must identify the unique name of the resulting product).
+        - SMILES string of the new degradant. CRITICAL: This MUST be a valid, canonical SMILES string. You MUST implicitly verify that standard valences are not exceeded (e.g. Carbon max 4 bonds, Oxygen max 2 bonds, Nitrogen max 3 or 4 if charged) so that RDKit can successfully parse and render it. Invalid SMILES will break the UI renderer. If uncertain, simplify the resulting structure to ensure valence validity.
+        - A brief explanation of the underlying mechanism (mechanismExplanation), including specific phenomena like pH changes, oxidation, complexation, adsorption, precipitation, or effects on stability and release kinetics.
         - ${probabilityInstruction}
         
         IMPORTANT: Probabilities MUST be realistic estimates between 0.01 and 0.99. DO NOT return 0.0 unless the impurity is chemically impossible.
@@ -195,12 +205,19 @@ export async function predictInteraction(
         responseSchema: {
           type: Type.OBJECT,
           properties: {
+            chainOfThought: {
+              type: Type.STRING,
+              description: `Perform your step-by-step chemical reasoning, mechanism formulation${method !== "Heuristic" ? ", and energy estimation" : ""} here BEFORE outputting the final compounds.`
+            },
             compounds: {
               type: Type.ARRAY,
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  name: { type: Type.STRING },
+                  name: { 
+                    type: Type.STRING,
+                    description: "You MUST strictly echo the user's original name exactly as it was provided. Do not convert the starting materials into IUPAC names."
+                  },
                   smiles: { type: Type.STRING },
                   features: { type: Type.ARRAY, items: { type: Type.STRING } },
                   interactionSites: { 
@@ -223,20 +240,38 @@ export async function predictInteraction(
               }
             }
           },
-          required: ["compounds", "interactionType", "mechanism", "degradationImpurities"]
+          required: ["chainOfThought", "compounds", "interactionType", "mechanism", "degradationImpurities"]
         }
       }
     });
 
-    const text = response.text;
-    if (!text) {
+    let fullText = "";
+    
+    for await (const chunk of responseStream) {
+      if (chunk.text) {
+        fullText += chunk.text;
+        if (onChunk) {
+          try {
+            // Use partial-json to parse the incomplete JSON string
+            const partial = parsePartial(fullText);
+            if (partial) {
+              onChunk(partial as Partial<PredictionResult>);
+            }
+          } catch (e) {
+            // Ignore partial parse errors for intermediate chunks
+          }
+        }
+      }
+    }
+
+    if (!fullText) {
       throw new AnalysisError("The model failed to generate a response. Please try again.", "EMPTY_RESPONSE");
     }
 
     try {
-      return JSON.parse(text);
+      return JSON.parse(fullText);
     } catch (e) {
-      console.error("JSON Parse Error:", text);
+      console.error("JSON Parse Error:", fullText);
       throw new AnalysisError("The model generated an invalid chemical report. This can happen with very complex structures. Please try again.", "INVALID_JSON");
     }
   } catch (error: any) {

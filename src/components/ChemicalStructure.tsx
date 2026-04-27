@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import SmilesDrawer from 'smiles-drawer';
+import React, { useEffect, useState } from 'react';
+import { getMoleculeSvg } from '../lib/rdkit';
 
 interface ChemicalStructureProps {
   smiles: string;
@@ -14,48 +14,48 @@ export const ChemicalStructure: React.FC<ChemicalStructureProps> = ({
   height = 200,
   className = ""
 }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [svgContent, setSvgContent] = useState<string | null>(null);
+  const [error, setError] = useState<boolean>(false);
 
   useEffect(() => {
-    if (canvasRef.current) {
-      const options = {
-        width: width,
-        height: height,
-        bondThickness: 1.2,
-        bondLength: 15,
-        shortBondLength: 0.85,
-        bondSpacing: 0.18 * 15,
-        atomVisualization: 'default',
-        isomeric: true,
-        debug: false,
-        terminalCarbons: false,
-        explicitHydrogens: false,
-        overlapSensitivity: 0.42,
-        overlapResolutionIterations: 10,
-        compactDrawing: true,
-        fontSizeLarge: 11,
-        fontSizeSmall: 7,
-        padding: 10
-      };
-
-      const smilesDrawer = new SmilesDrawer.Drawer(options);
-      
-      SmilesDrawer.parse(smiles, (tree: any) => {
-        smilesDrawer.draw(tree, canvasRef.current, 'light', false);
-      }, (err: any) => {
-        console.error('SmilesDrawer error:', err);
-      });
+    let mounted = true;
+    
+    if (!smiles) {
+      setError(true);
+      setSvgContent(null);
+      return;
     }
+
+    setError(false);
+    
+    getMoleculeSvg(smiles, width, height).then((svg) => {
+      if (!mounted) return;
+      if (svg) {
+        setSvgContent(svg);
+        setError(false);
+      } else {
+        setError(true);
+        setSvgContent(null);
+      }
+    });
+
+    return () => { mounted = false; };
   }, [smiles, width, height]);
 
   return (
-    <div className={`flex items-center justify-center bg-white rounded-lg ${className}`}>
-      <canvas 
-        ref={canvasRef} 
-        width={width} 
-        height={height}
-        className="max-w-full h-auto"
-      />
+    <div 
+      className={`relative flex items-center justify-center bg-white rounded-lg ${className}`}
+      style={{ width, height }}
+    >
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-50 text-[10px] text-slate-400 p-2 text-center"> Structure unavailable </div>
+      )}
+      {!error && svgContent && (
+        <div 
+          className="w-full h-full flex items-center justify-center [&>svg]:max-w-full [&>svg]:h-auto"
+          dangerouslySetInnerHTML={{ __html: svgContent }} 
+        />
+      )}
     </div>
   );
 };

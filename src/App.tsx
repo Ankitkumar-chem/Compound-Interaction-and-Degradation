@@ -3,20 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, FormEvent, useEffect } from "react";
+import { useState, FormEvent, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  Beaker, 
   Search, 
   AlertTriangle, 
   CheckCircle2, 
   ShieldAlert,
   RefreshCw,
   Download,
-  Microscope,
   Info,
   Database,
-  History
+  History,
+  ArrowLeft
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -28,10 +27,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { predictInteraction, PredictionResult, InputType, CompoundInput, AnalysisError, PredictionMethod } from "@/src/lib/gemini";
 import { ChemicalStructure } from "@/src/components/ChemicalStructure";
-import { initRDKit, getMolecularDescriptors } from "@/src/lib/rdkit";
+import { initRDKit, getMolecularDescriptors, computeStrainEnergy } from "@/src/lib/rdkit";
 import { sanitizeData } from "@/src/lib/firestore-utils";
 import { Plus, Trash2, AlertCircle, WifiOff, Clock, Lock } from "lucide-react";
-import { useRef } from "react";
 import * as XLSX from "xlsx";
 import { db, auth } from "@/src/lib/firebase";
 import { collection, addDoc, setDoc, doc, serverTimestamp, getDocs, query, orderBy, limit, where, getCountFromServer } from "firebase/firestore";
@@ -50,6 +48,7 @@ export default function App() {
   const [compounds, setCompounds] = useState<CompoundInput[]>([
     { value: "", type: "Name" }
   ]);
+  const [view, setView] = useState<'input' | 'loading' | 'results'>('input');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<{ message: string; type: string } | null>(null);
@@ -71,15 +70,29 @@ export default function App() {
 
     const timer = setTimeout(async () => {
       try {
-        const val = activeCompound.value;
+        const val = activeCompound.value.toLowerCase();
         const q = query(
           collection(db, "compounds"), 
-          where("name", ">=", val),
-          where("name", "<=", val + "\uf8ff"),
-          limit(5)
+          where("name", ">=", activeCompound.value.charAt(0).toUpperCase() + activeCompound.value.slice(1).toLowerCase()),
+          where("name", "<=", activeCompound.value.charAt(0).toUpperCase() + activeCompound.value.slice(1).toLowerCase() + "\uf8ff"),
+          limit(20)
         );
         const snap = await getDocs(q);
-        setSuggestions(snap.docs.map(d => d.data()));
+        const allSuggestions = snap.docs.map(d => ({ ...d.data(), id: d.id })) as any[];
+        
+        // Dynamically trigger remediation for compounds with missing SMILES
+        allSuggestions.forEach((s: any) => {
+          if (!s.smiles) {
+            import('./lib/compound-manager').then(m => m.remediateCompoundSmiles(s.id, s.name)).catch(console.error);
+          }
+        });
+        
+        // Client-side case-insensitive filtering
+        const filtered = allSuggestions.filter(s => 
+          s.name.toLowerCase().includes(val)
+        );
+        
+        setSuggestions(filtered.slice(0, 5));
       } catch (err) {
         console.error("Search Error:", err);
       }
@@ -164,24 +177,66 @@ export default function App() {
     const validInputs = compounds.filter(c => c.value.trim() !== "");
     if (validInputs.length === 0) return;
 
+    setView('loading');
     setLoading(true);
     setError(null);
     try {
-      // Fetch recent history to "train" (few-shot) the model
-      let history: any[] = [];
-      try {
-        const historyQuery = query(
-          collection(db, "predictions"),
-          orderBy("timestamp", "desc"),
-          limit(5)
-        );
-        const historySnap = await getDocs(historyQuery);
-        history = historySnap.docs.map(doc => doc.data());
-      } catch (historyErr) {
-        console.warn("Failed to fetch prediction history for model refinement:", historyErr);
-      }
+      
+      // Attempt to upgrade any "Name" inputs to exact "SMILES" representations using our local database 
+      // prior to passing them to the AI to prevent AI structure hallucinations.
+      const upgradedInputs = await Promise.all(validInputs.map(async (input) => {
+        if (input.type === "Name") {
+          try {
+            const q = query(collection(db, "compounds"), where("name", "==", input.value.trim()));
+            const snap = await getDocs(q);
+            if (!snap.empty) {
+              const docData = snap.docs[0].data();
+              if (docData.smiles) {
+                console.log(`Upgrading ${input.value} to exact structural SMILES from DB`);
+                return { value: docData.smiles, type: "SMILES" as InputType, originalName: input.value.trim() };
+              }
+            }
+            // Case insensitive fallback check
+            const q2 = query(collection(db, "compounds"), where("name", "==", input.value.trim().toLowerCase()));
+            const snap2 = await getDocs(q2);
+            if (!snap2.empty) {
+               const docData2 = snap2.docs[0].data();
+               if (docData2.smiles) {
+                 return { value: docData2.smiles, type: "SMILES" as InputType, originalName: input.value.trim() };
+               }
+            }
+          } catch (e) {
+            console.error("DB Upgrade query failed", e);
+          }
+        }
+        return input;
+      }));
 
-      const prediction = await predictInteraction(validInputs, predictionMethod, history);
+      // Compute RDKit descriptors for input compounds (if SMILES provided) before passing to AI
+      const validInputsWithDescriptors = await Promise.all(upgradedInputs.map(async (input) => {
+        if (input.type === "SMILES") {
+          try {
+            const desc = await getMolecularDescriptors(input.value);
+            return { ...input, descriptors: desc };
+          } catch (e) {
+            return input;
+          }
+        }
+        return input;
+      }));
+
+      let switchedView = false;
+      const prediction = await predictInteraction(validInputsWithDescriptors, predictionMethod, (partial) => {
+        if (!switchedView && (
+          (partial.chainOfThought && partial.chainOfThought.length > 0) || 
+          (partial.compounds && partial.compounds.length > 0)
+        )) {
+          setView('results');
+          setLoading(false);
+          switchedView = true;
+        }
+        setResult(partial as PredictionResult);
+      });
       
       // Calculate real molecular descriptors (Molecular Weight) using RDKit in parallel
       await Promise.all([
@@ -199,11 +254,19 @@ export default function App() {
             if (descriptors) {
               impurity.molecularDescriptors = descriptors;
             }
+            if (predictionMethod === "Boltzmann" || predictionMethod === "Both") {
+              const strainEnergy = await computeStrainEnergy(impurity.smiles);
+              if (strainEnergy !== null) {
+                // Ground the LLM's estimate with explicit MMFF94 computational reality.
+                impurity.relativeEnergy = strainEnergy; 
+              }
+            }
           }
         })
       ]);
 
       setResult(prediction);
+      setView('results');
 
       // Save prediction to Firebase
       await addDoc(collection(db, "predictions"), sanitizeData({
@@ -253,6 +316,7 @@ export default function App() {
       });
 
     } catch (err: any) {
+      setView('input');
       console.error(err);
       if (err instanceof AnalysisError) {
         setError({ message: err.message, type: err.type });
@@ -382,10 +446,7 @@ export default function App() {
       <header className="border-b bg-white sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="bg-foreground text-background p-1.5 rounded-lg">
-              <Beaker className="w-6 h-6" />
-            </div>
-            <h1 className="text-xl font-bold tracking-tight font-serif">A-Pi1</h1>
+            <h1 className="text-xl font-bold tracking-tight font-serif">A-Pi<span className="text-2xl">1</span></h1>
           </div>
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-slate-50 rounded-full border border-slate-100">
@@ -398,21 +459,87 @@ export default function App() {
                 <History className="w-3 h-3 text-emerald-500" />
                 <span className="text-[10px] font-medium text-slate-500">{dbStats.predictions} Predictions</span>
               </div>
-            </div>
-            <Badge variant="outline" className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
-              v1.0.0-beta
-            </Badge>
           </div>
         </div>
-      </header>
+      </div>
+    </header>
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 py-8 w-full grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Column: Input */}
-        <div className="lg:col-span-4 space-y-6">
+
+      <main className="flex-1 max-w-7xl mx-auto px-4 py-8 w-full relative">
+        {view === 'loading' && (
+          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white">
+            <div className="relative w-32 h-32 flex items-center justify-center mb-8">
+              {/* Nucleus */}
+              <div className="w-8 h-8 bg-indigo-600 rounded-full shadow-[0_0_30px_#4f46e5] z-10" />
+              
+              {/* Orbit Path */}
+              <div className="absolute w-24 h-24 border-2 border-slate-100 rounded-full" />
+              
+              {/* Electron Container (Rotates) */}
+              <motion.div 
+                className="absolute w-24 h-24"
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+              >
+                {/* The Electron */}
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 bg-indigo-400 rounded-full shadow-[0_0_15px_#818cf8]" />
+              </motion.div>
+            </div>
+            
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold text-slate-800">Generating Possible Degradation Products...</h2>
+            </div>
+          </div>
+        )}
+        
+        {view === 'input' && (
+          <div className="w-full max-w-3xl mx-auto space-y-6">
           <Card className="shadow-sm border-slate-200">
             <CardHeader>
               <CardTitle className="text-lg font-serif">Input</CardTitle>
               <CardDescription>Predict interactions and degradation pathways between compounds or analyze intrinsic stability.</CardDescription>
+              {error && (
+                <div className="pt-4">
+                  <Alert variant="destructive" className="border-red-200 bg-red-50">
+                    <div className="flex gap-3">
+                      <div className="mt-0.5">
+                        {(error.type === "QUOTA_EXCEEDED" || error.type === "MODEL_OVERLOADED") && <Clock className="h-5 w-5 text-red-600 animate-pulse" />}
+                        {error.type === "SAFETY_TRIGGERED" && <ShieldAlert className="h-5 w-5 text-red-600" />}
+                        {error.type === "CONNECTION_ERROR" && <WifiOff className="h-5 w-5 text-red-600" />}
+                        {(error.type === "INVALID_SMILES" || error.type === "INVALID_SMARTS" || error.type === "INVALID_JSON") && <AlertCircle className="h-5 w-5 text-red-600" />}
+                        {error.type === "CONFIG_ERROR" && <Lock className="h-5 w-5 text-red-600" />}
+                        {error.type === "UNKNOWN_ERROR" && <AlertTriangle className="h-5 w-5 text-red-600" />}
+                      </div>
+                      <div className="space-y-1">
+                        <AlertTitle className="text-red-800 font-bold">
+                          {error.type === "QUOTA_EXCEEDED" ? "API Quota Exceeded" : 
+                           error.type === "MODEL_OVERLOADED" ? "Model Temporarily Overloaded" :
+                           error.type === "SAFETY_TRIGGERED" ? "Safety Filter Logic Engaged" :
+                           error.type === "INVALID_SMILES" || error.type === "INVALID_SMARTS" ? "Structural Format Error" :
+                           error.type === "CONNECTION_ERROR" ? "Network Communication Failure" :
+                           error.type === "CONFIG_ERROR" ? "Configuration Credential Error" :
+                           error.type === "INVALID_JSON" ? "Structure Interpretation Failure" :
+                           "Analytical Processing Error"}
+                        </AlertTitle>
+                        <AlertDescription className="text-red-700">
+                          {error.message}
+                        </AlertDescription>
+                        {(error.type === "QUOTA_EXCEEDED" || error.type === "MODEL_OVERLOADED" || error.type === "CONNECTION_ERROR") && (
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={(e) => handlePredict(e as any)}
+                            className="mt-3 border-red-200 text-red-700 hover:bg-red-100"
+                          >
+                            <RefreshCw className="mr-2 h-3 w-3" />
+                            Retry Analytical Operation
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </Alert>
+                </div>
+              )}
             </CardHeader>
             <CardContent>
               <form onSubmit={handlePredict} className="space-y-6" autoComplete="off">
@@ -481,7 +608,7 @@ export default function App() {
                       {compounds.slice(1).map((c, idx) => {
                         const actualIndex = idx + 1;
                         return (
-                          <div key={`input-compound-${actualIndex}`} className="space-y-3 relative group animate-in fade-in slide-in-from-top-2 duration-200">
+                          <div key={`input-compound-${actualIndex}`} className="space-y-3 relative group">
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Secondary Compound {idx + 1}</span>
                               <Button 
@@ -635,102 +762,19 @@ export default function App() {
               </form>
             </CardContent>
           </Card>
-        </div>
+          </div>
+        )}
 
-        {/* Right Column: Results */}
-        <div className="lg:col-span-8">
-          <AnimatePresence mode="wait">
-            {!result && !loading && !error && null}
-
-            {loading && (
-              <motion.div
-                key="loading-state"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="h-full flex flex-col items-center justify-center space-y-6 p-12"
-              >
-                <div className="relative w-32 h-32 flex items-center justify-center">
-                  {/* Nucleus */}
-                  <div className="w-6 h-6 bg-indigo-600 rounded-full shadow-[0_0_20px_#4f46e5] z-10" />
-                  
-                  {/* Orbit Path */}
-                  <div className="absolute w-24 h-24 border border-slate-200 rounded-full" />
-                  
-                  {/* Electron Container (Rotates) */}
-                  <motion.div 
-                    className="absolute w-24 h-24"
-                    animate={{ rotate: 360 }}
-                    transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-                  >
-                    {/* The Electron */}
-                    <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-indigo-400 rounded-full shadow-[0_0_12px_#818cf8]" />
-                  </motion.div>
-
-                  {/* Secondary faint orbit for visual depth */}
-                  <div className="absolute w-24 h-24 border border-indigo-50 rounded-full rotate-45" />
-                </div>
-                <div className="text-center space-y-2">
-                  <h3 className="text-lg font-medium animate-pulse">Analyzing Molecular Compatibility</h3>
-                </div>
-              </motion.div>
-            )}
-
-            {error && (
-              <motion.div
-                key="error-state"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="p-6"
-              >
-                <Alert variant="destructive" className="border-red-200 bg-red-50">
-                  <div className="flex gap-3">
-                    <div className="mt-0.5">
-                      {(error.type === "QUOTA_EXCEEDED" || error.type === "MODEL_OVERLOADED") && <Clock className="h-5 w-5 text-red-600 animate-pulse" />}
-                      {error.type === "SAFETY_TRIGGERED" && <ShieldAlert className="h-5 w-5 text-red-600" />}
-                      {error.type === "CONNECTION_ERROR" && <WifiOff className="h-5 w-5 text-red-600" />}
-                      {(error.type === "INVALID_SMILES" || error.type === "INVALID_SMARTS" || error.type === "INVALID_JSON") && <AlertCircle className="h-5 w-5 text-red-600" />}
-                      {error.type === "CONFIG_ERROR" && <Lock className="h-5 w-5 text-red-600" />}
-                      {error.type === "UNKNOWN_ERROR" && <AlertTriangle className="h-5 w-5 text-red-600" />}
-                    </div>
-                    <div className="space-y-1">
-                      <AlertTitle className="text-red-800 font-bold">
-                        {error.type === "QUOTA_EXCEEDED" ? "API Quota Exceeded" : 
-                         error.type === "MODEL_OVERLOADED" ? "Model Temporarily Overloaded" :
-                         error.type === "SAFETY_TRIGGERED" ? "Safety Filter Logic Engaged" :
-                         error.type === "INVALID_SMILES" || error.type === "INVALID_SMARTS" ? "Structural Format Error" :
-                         error.type === "CONNECTION_ERROR" ? "Network Communication Failure" :
-                         error.type === "CONFIG_ERROR" ? "Configuration Credential Error" :
-                         error.type === "INVALID_JSON" ? "Structure Interpretation Failure" :
-                         "Analytical Processing Error"}
-                      </AlertTitle>
-                      <AlertDescription className="text-red-700">
-                        {error.message}
-                      </AlertDescription>
-                      {(error.type === "QUOTA_EXCEEDED" || error.type === "MODEL_OVERLOADED" || error.type === "CONNECTION_ERROR") && (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          onClick={(e) => handlePredict(e as any)}
-                          className="mt-3 border-red-200 text-red-700 hover:bg-red-100"
-                        >
-                          <RefreshCw className="mr-2 h-3 w-3" />
-                          Retry Analytical Operation
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </Alert>
-              </motion.div>
-            )}
-
-            {result && !loading && (
-              <motion.div
-                key="results-state"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
+        {/* View: Results */}
+        {view === 'results' && result && !loading && (
+          <div className="w-full max-w-5xl mx-auto space-y-6">
+            <Button variant="ghost" className="mb-4" onClick={() => {
+              setView('input');
+              // Clear result when returning to input to prevent flashing old results later
+              setResult(null);
+            }}>
+                <ArrowLeft className="mr-2 h-4 w-4" /> Back to Input
+            </Button>
                 <div className="flex justify-end">
                   <Button 
                     variant="outline" 
@@ -753,14 +797,18 @@ export default function App() {
                     </div>
                     
                     <div className="grid grid-cols-1 gap-4 pt-8">
-                      {result.compounds.map((compound, idx) => (
-                        <div key={`compound-${idx}-${compound.name}-${compound.smiles.slice(0, 10)}`} className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col md:flex-row items-center md:items-stretch">
-                          <div className="w-full md:w-48 h-48 bg-white flex items-center justify-center border-b md:border-b-0 md:border-r border-slate-100 p-4 relative">
-                            <ChemicalStructure 
-                              smiles={compound.smiles} 
-                              width={160} 
-                              height={160} 
-                            />
+                      {(!result.compounds || result.compounds.length === 0 ? compounds.filter(c => c.value.trim() !== "") : result.compounds).map((compound, idx) => (
+                        <div key={`compound-${idx}`} className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col md:flex-row items-center md:items-stretch min-h-[192px]">
+                          <div className="w-full md:w-48 h-48 bg-slate-50 flex items-center justify-center border-b md:border-b-0 md:border-r border-slate-100 p-4 relative">
+                            {('smiles' in compound && compound.smiles) ? (
+                              <ChemicalStructure 
+                                smiles={compound.smiles as string} 
+                                width={160} 
+                                height={160} 
+                              />
+                            ) : (
+                              <div className="animate-pulse bg-slate-200 h-24 w-24 rounded-full opacity-50" />
+                            )}
                             <div className="absolute top-3 left-3 bg-[#f1f5f9] text-slate-500 text-[10px] font-bold px-2 py-1 rounded-sm">
                               C{idx + 1}
                             </div>
@@ -768,26 +816,39 @@ export default function App() {
                           <div className="p-6 flex-1 flex flex-col justify-center space-y-3">
                             <div className="flex items-center gap-3">
                               <div className="font-serif text-2xl font-bold text-[#0f172a] leading-tight">
-                                {compound.name}
+                                {('name' in compound && compound?.name) ? compound.name : <div className="h-6 w-32 bg-slate-200 animate-pulse rounded" />}
                               </div>
                               <Badge variant="outline" className={`text-[10px] font-mono border-slate-100 ${idx === 0 ? 'text-[#4f46e5] bg-[#f5f7ff] border-indigo-100' : 'text-[#94a3b8]'}`}>
                                 {idx === 0 ? 'Primary Compound' : `Secondary Compound ${idx}`}
                               </Badge>
                             </div>
-                            <div className="font-mono text-[11px] text-[#94a3b8] break-all leading-relaxed" title={compound.smiles}>{compound.smiles}</div>
+                            
+                            {('smiles' in compound && compound.smiles) ? (
+                               <div className="font-mono text-[11px] text-[#94a3b8] break-all leading-relaxed" title={compound.smiles}>{compound.smiles}</div>
+                            ) : (
+                               <div className="h-4 w-48 bg-slate-100 animate-pulse rounded" />
+                            )}
+                            
                             <div className="flex flex-wrap gap-2 pt-2">
-                              {compound.molecularDescriptors && (
+                              {('molecularDescriptors' in compound && compound?.molecularDescriptors) && (
                                 <Badge variant="outline" className="bg-[#f8fafc] text-[#64748b] border-slate-200 text-[10px] py-0 px-2 font-mono">
                                   Molecular Weight: {compound.molecularDescriptors.MolWt != null ? compound.molecularDescriptors.MolWt.toFixed(2) : "N/A"}
                                 </Badge>
                               )}
-                              {compound.features.map((feature, i) => (
+                              {('features' in compound && compound?.features && compound.features.length > 0) ? compound.features.map((feature, i) => (
                                 <Badge key={`feature-${idx}-${i}`} variant="outline" className="bg-[#f8fafc] text-[#475569] border-slate-200 text-[10px] py-0 px-2">
                                   {feature}
                                 </Badge>
-                              ))}
+                              )) : (
+                                (!('features' in compound)) && (
+                                  <>
+                                    <div className="h-4 w-16 bg-slate-100 animate-pulse rounded-full" />
+                                    <div className="h-4 w-20 bg-slate-100 animate-pulse rounded-full" />
+                                  </>
+                                )
+                              )}
                             </div>
-                            {compound.interactionSites && compound.interactionSites.length > 0 && (
+                            {('interactionSites' in compound && compound?.interactionSites && compound.interactionSites.length > 0) && (
                               <div className="pt-2 space-y-1.5">
                                 <div className="text-[10px] font-bold text-[#4f46e5] uppercase tracking-wider">Potential Interaction Sites</div>
                                 <div className="flex flex-wrap gap-1.5">
@@ -805,26 +866,67 @@ export default function App() {
                     </div>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-8">
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-5 min-h-[120px]">
+                      <h4 className="text-sm font-semibold flex items-center gap-2 text-[#0f172a] mb-2">
+                        AI Reasoning Framework
+                      </h4>
+                      <div className="text-xs text-slate-600 leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap">
+                        {result.chainOfThought ? result.chainOfThought : (
+                           <div className="animate-pulse space-y-2 mt-2">
+                             <div className="h-3 bg-slate-200 rounded w-full"></div>
+                             <div className="h-3 bg-slate-200 rounded w-5/6"></div>
+                             <div className="h-3 bg-slate-200 rounded w-4/6"></div>
+                           </div>
+                        )}
+                      </div>
+                    </div>
 
-                    {result.degradationImpurities && result.degradationImpurities.length > 0 && (
-                      <>
-                        <Separator />
-                        <section className="space-y-4">
-                          <h4 className="text-sm font-semibold flex items-center gap-2 text-[#0f172a]">
-                            <Microscope className="w-4 h-4 text-[#6366f1]" />
-                            Predicted Degradation Impurities
-                          </h4>
-                          <div className="grid grid-cols-1 gap-6">
-                            {[...result.degradationImpurities]
-                              .sort((a, b) => b.probability - a.probability)
+                    <>
+                      <Separator />
+                      <section className="space-y-4">
+                        <h4 className="text-sm font-semibold flex items-center gap-2 text-[#0f172a]">
+                          Predicted Degradation Impurities
+                        </h4>
+                        <div className="grid grid-cols-1 gap-6">
+                          {(!result.degradationImpurities || result.degradationImpurities.length === 0) ? (
+                            Array.from({ length: 3 }).map((_, i) => (
+                              <div key={`skeleton-impurity-${i}`} className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col md:flex-row min-h-[256px]">
+                                <div className="w-full md:w-64 h-64 bg-slate-50 flex items-center justify-center border-b md:border-b-0 md:border-r border-slate-100 p-4">
+                                  <div className="animate-pulse bg-slate-200 h-32 w-32 rounded-full opacity-50" />
+                                </div>
+                                <div className="p-6 flex-1 space-y-4 w-full">
+                                  <div className="flex justify-between items-start">
+                                    <div className="space-y-2 w-full">
+                                      <div className="h-6 w-48 bg-slate-100 animate-pulse rounded" />
+                                      <div className="h-4 w-16 bg-slate-50 animate-pulse rounded" />
+                                    </div>
+                                    <div className="h-6 w-16 bg-slate-100 animate-pulse rounded" />
+                                  </div>
+                                  <div className="space-y-2 pt-2">
+                                    <div className="h-4 w-full bg-slate-50 animate-pulse rounded" />
+                                    <div className="h-4 w-5/6 bg-slate-50 animate-pulse rounded" />
+                                  </div>
+                                  <div className="bg-[#f8fafc] border border-slate-100 rounded-lg p-3 space-y-2 mt-4">
+                                    <div className="h-4 w-24 bg-slate-200 animate-pulse rounded mb-1" />
+                                    <div className="h-3 w-full bg-slate-100 animate-pulse rounded" />
+                                    <div className="h-3 w-4/5 bg-slate-100 animate-pulse rounded" />
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            [...(result.degradationImpurities || [])]
+                              .sort((a, b) => (b?.probability || 0) - (a?.probability || 0))
                               .map((impurity, i) => (
-                              <div key={`impurity-${i}-${impurity.iupacName}-${impurity.smiles.slice(0, 10)}`} className="bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-indigo-200 transition-colors flex flex-col md:flex-row">
+                              <div key={`impurity-${i}-${impurity?.iupacName || 'unk'}-${(impurity?.smiles || '').slice(0, 10)}`} className="bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-indigo-200 transition-colors flex flex-col md:flex-row">
                                 <div className="w-full md:w-64 h-64 bg-white flex items-center justify-center border-b md:border-b-0 md:border-r border-slate-100 p-4 relative">
-                                  <ChemicalStructure 
-                                    smiles={impurity.smiles} 
-                                    width={240} 
-                                    height={240} 
-                                  />
+                                  {impurity?.smiles && (
+                                    <ChemicalStructure 
+                                      smiles={impurity.smiles} 
+                                      width={240} 
+                                      height={240} 
+                                    />
+                                  )}
                                   <div className="absolute top-3 left-3 bg-[#f1f5f9] text-[#64748b] text-[10px] font-bold px-2 py-1 rounded-sm">
                                     #{i + 1}
                                   </div>
@@ -835,6 +937,11 @@ export default function App() {
                                       <div className="font-bold text-xl text-[#0f172a] break-words">
                                         {impurity.iupacName}
                                       </div>
+                                      {impurity.molecularDescriptors && (
+                                        <div className="text-[11px] font-mono font-medium text-slate-500 bg-slate-50 border border-slate-100 inline-flex px-2 py-0.5 rounded-sm">
+                                          MW: {impurity.molecularDescriptors.MolWt != null ? impurity.molecularDescriptors.MolWt.toFixed(2) : "N/A"}
+                                        </div>
+                                      )}
                                     </div>
                                     <div className="text-right space-y-1">
                                       <div className="text-lg font-bold text-[#4f46e5]">{impurity.probability != null ? (impurity.probability * 100).toFixed(1) : "N/A"}%</div>
@@ -851,20 +958,17 @@ export default function App() {
                                     </div>
                                   </div>
                                   <div className="text-sm text-[#475569] leading-relaxed">{impurity.structureDescription}</div>
-                                  
-                                  {impurity.molecularDescriptors && (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                                      <div className="bg-[#f8fafc] border border-slate-100 rounded p-2 text-center">
-                                        <div className="text-[9px] uppercase text-slate-400 font-bold mb-0.5">Molecular Weight</div>
-                                        <div className="text-xs font-mono font-bold text-slate-700">{impurity.molecularDescriptors.MolWt != null ? impurity.molecularDescriptors.MolWt.toFixed(2) : "N/A"}</div>
-                                      </div>
-                                    </div>
-                                  )}
+                                  <div className="bg-[#f8fafc] border border-slate-100 rounded-lg p-3 text-xs text-[#475569] leading-relaxed">
+                                    <span className="font-bold text-[#0f172a] block mb-1">Mechanism:</span>
+                                    {impurity.mechanismExplanation}
+                                  </div>
 
                                   <div className="flex flex-wrap gap-3 pt-2">
-                                    <div className="text-[10px] bg-[#eef2ff] text-[#4338ca] px-3 py-1 rounded-full font-semibold uppercase tracking-wider">
-                                      {impurity.origin}
-                                    </div>
+                                    {compounds.length > 1 && (
+                                      <div className="text-[10px] bg-[#eef2ff] text-[#4338ca] px-3 py-1 rounded-full font-semibold uppercase tracking-wider">
+                                        {impurity.origin}
+                                      </div>
+                                    )}
                                     <div className="text-[10px] bg-[#fffbeb] text-[#b45309] px-3 py-1 rounded-full font-semibold uppercase tracking-wider">
                                       {impurity.condition}
                                     </div>
@@ -877,28 +981,11 @@ export default function App() {
                                   </div>
                                 </div>
                               </div>
-                            ))}
-                          </div>
-                        </section>
-                      </>
-                    )}
-
-                    <Separator />
-
-                    <div className="grid grid-cols-1 gap-8">
-                      <section className="space-y-3">
-                        <h4 className="text-sm font-semibold flex items-center gap-2 text-[#0f172a]">
-                          <Beaker className="w-4 h-4 text-[#a855f7]" />
-                          Mechanism of Interaction
-                        </h4>
-                        <div className="bg-[#f8fafc] p-4 rounded-xl border border-slate-100">
-                          <p className="text-[#475569] text-sm leading-relaxed italic">
-                            {result.mechanism}
-                          </p>
+                            ))
+                          )}
                         </div>
                       </section>
-                    </div>
-
+                    </>
                   </CardContent>
                   <CardFooter className="bg-[#fcfcfc] border-t py-4">
                     <p className="text-[10px] text-[#94a3b8] italic">
@@ -907,10 +994,8 @@ export default function App() {
                   </CardFooter>
                 </Card>
               </div>
-            </motion.div>
+            </div>
             )}
-          </AnimatePresence>
-        </div>
       </main>
 
       {/* Footer */}
