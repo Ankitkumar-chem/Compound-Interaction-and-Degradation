@@ -712,10 +712,6 @@ export default function App() {
             .sort((a, b) => (b.probability || 0) - (a.probability || 0))
             .slice(0, 5);
 
-          const maxProb = topImpurities.length > 0 ? Math.max(...topImpurities.map(i => i.probability || 0)) : 0;
-          const energies = topImpurities.map(i => i.relativeEnergy).filter((e): e is number => e != null);
-          const minEnergy = energies.length > 0 ? Math.min(...energies) : null;
-
           return (
             <div className="w-full space-y-6">
               {/* Action Toolbar */}
@@ -734,44 +730,7 @@ export default function App() {
                 </button>
               </div>
 
-              {/* 1. Executive Summary Card */}
-              <section className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-xs">
-                <div className="mb-4">
-                  <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
-                    Executive Summary
-                  </h3>
-                  <p className="text-xs sm:text-sm text-[#64748B]">
-                    Calculated key thermodynamic and kinetic performance indicators for the reaction system.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
-                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Reaction Products</div>
-                    <div className="text-2xl font-extrabold text-[#0F172A]">{topImpurities.length}</div>
-                    <div className="text-[10px] text-[#94A3B8] mt-1">Total identified transformation products (Top 5)</div>
-                  </div>
-                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
-                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Highest Probability</div>
-                    <div className="text-2xl font-extrabold text-[#4F46E5]">{(maxProb * 100).toFixed(1)}%</div>
-                    <div className="text-[10px] text-[#94A3B8] mt-1">Maximum formation likelihood</div>
-                  </div>
-                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
-                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Interaction Nature</div>
-                    <div className="text-2xl font-extrabold text-[#0F172A]">{result.interactionType || "Chemical"}</div>
-                    <div className="text-[10px] text-[#94A3B8] mt-1">Dominant interaction classification</div>
-                  </div>
-                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
-                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Lowest ΔG (Driving Force)</div>
-                    <div className="text-2xl font-extrabold text-[#0F172A] font-mono">
-                      {minEnergy !== null ? `${minEnergy.toFixed(2)} kcal/mol` : "Calculated"}
-                    </div>
-                    <div className="text-[10px] text-[#94A3B8] mt-1">Most exergonic thermodynamic pathway</div>
-                  </div>
-                </div>
-              </section>
-
-            {/* 2. Input Chemical Data Card */}
+            {/* 1. Input Chemical Data Card */}
             <section className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-xs">
               <div className="mb-5">
                 <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
