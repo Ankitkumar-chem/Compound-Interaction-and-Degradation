@@ -37,14 +37,20 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isValidCompound(data) {
-      return data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
-             data.smiles is string && data.smiles.size() > 0 && data.smiles.size() < 2000;
-    }
-
     function isAdmin() {
       return isAuthenticated() && 
              (request.auth.token.email == "ak5789248@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    function isValidCompound(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.smiles is string && data.smiles.size() <= 2000;
+    }
+
+    function isValidPrediction(data) {
+      return data.inputs is list && data.inputs.size() > 0 && data.inputs.size() <= 10 &&
+             data.result is map &&
+             data.method is string && (data.method == 'Boltzmann' || data.method == 'Heuristic' || data.method == 'Both');
     }
 
     // ===============================================================
@@ -52,13 +58,25 @@ service cloud.firestore {
     // ===============================================================
 
     match /compounds/{compoundId} {
-      // Allow public read/write for demo purposes since Auth is restricted
-      allow read, write: if true;
+      // Allow public read for compound lookup and autocomplete
+      allow read: if true;
+      // Allow creation of verified compounds with length and type bounds
+      allow create: if isValidCompound(request.resource.data);
+      // Allow updating missing SMILES/descriptors, but preserve name integrity
+      allow update: if (isValidCompound(request.resource.data) && request.resource.data.name == resource.data.name) || isAdmin();
+      // Forbid deletion to prevent database wiping
+      allow delete: if isAdmin();
     }
 
     match /predictions/{predictionId} {
-      // Allow public read/write for demo purposes since Auth is restricted
-      allow read, write: if true;
+      // Allow read for summary metrics and history
+      allow read: if true;
+      // Allow creation of valid prediction results
+      allow create: if isValidPrediction(request.resource.data);
+      // Predictions are immutable once logged
+      allow update: if isAdmin();
+      // Forbid deletion by public users
+      allow delete: if isAdmin();
     }
   }
 }
