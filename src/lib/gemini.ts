@@ -213,7 +213,7 @@ export async function predictInteraction(
         - List of key structural features.
         - List of specific "Interaction Sites" likely to be involved in reaction or degradation.
         
-        Predict exactly 10 possible reaction byproducts, degradation products, or interaction adducts derived from Compound 1.
+        Predict ONLY the TOP 5 most significant reaction byproducts, degradation products, or interaction adducts derived from Compound 1.
         For each product, you MUST specify:
         - Whether it forms from "Direct degradation" or "Interaction with other compound".
         - Which specific condition it forms under.
@@ -224,7 +224,7 @@ export async function predictInteraction(
         
         IMPORTANT: Probabilities MUST be realistic estimates between 0.01 and 0.99. DO NOT return 0.0 unless the product is chemically impossible.
         
-        Rank the products by their calculated Boltzmann probability (if available) or general probability.`,
+        Rank the products by their calculated Boltzmann probability (if available) or general probability. Do not return more than 5 products.`,
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -293,7 +293,11 @@ export async function predictInteraction(
         }
 
         try {
-          return JSON.parse(fullText);
+          const parsed = JSON.parse(fullText);
+          if (parsed && Array.isArray(parsed.degradationImpurities)) {
+            parsed.degradationImpurities = parsed.degradationImpurities.slice(0, 5);
+          }
+          return parsed;
         } catch (e) {
           console.error("JSON Parse Error:", fullText);
           throw new AnalysisError("The model generated an invalid chemical report. This can happen with very complex structures. Please try again.", "INVALID_JSON");

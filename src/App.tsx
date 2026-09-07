@@ -224,6 +224,10 @@ export default function App() {
         setResult(partial as PredictionResult);
       });
       
+      if (prediction.degradationImpurities) {
+        prediction.degradationImpurities = prediction.degradationImpurities.slice(0, 5);
+      }
+
       // Calculate real molecular descriptors (Molecular Weight) using RDKit in parallel
       await Promise.all([
         ...prediction.compounds.map(async (comp) => {
@@ -630,10 +634,9 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => removeCompound(actualIndex)}
-                            title="Remove compound"
-                            className="w-10 h-10 flex items-center justify-center text-[#94A3B8] hover:text-red-500 hover:bg-red-50 border border-transparent hover:border-red-200 rounded-lg transition-colors text-sm font-bold"
+                            className="px-3 h-10 flex items-center justify-center text-[#94A3B8] hover:text-red-600 hover:bg-red-50 border border-[#E2E8F0] hover:border-red-200 rounded-lg transition-colors text-xs font-medium"
                           >
-                            ✕
+                            Remove
                           </button>
                         </div>
                       );
@@ -659,8 +662,8 @@ export default function App() {
                   <div className="space-y-2">
                     {[
                       { id: "Both", title: "Dual Engine (Heuristic Kinetic Rules + Boltzmann Thermodynamic ΔG)" },
-                      { id: "Heuristic", title: "Heuristic / AI (Expert Kinetic Activation & Transition States)" },
-                      { id: "Boltzmann", title: "Boltzmann / Physics (Thermodynamic Free Energy ΔG Distribution at 298.15K)" }
+                      { id: "Heuristic", title: "Heuristic (Expert Kinetic Activation & Transition States)" },
+                      { id: "Boltzmann", title: "Boltzmann (Thermodynamic Free Energy ΔG Distribution at 298.15K)" }
                     ].map((opt) => (
                       <label
                         key={opt.id}
@@ -688,7 +691,7 @@ export default function App() {
                   disabled={loading || compounds.every(c => c.value.trim() === "")}
                   className="w-full py-3 px-6 bg-[#4F46E5] hover:bg-[#4338CA] disabled:opacity-50 text-white font-semibold text-base rounded-lg shadow-sm hover:shadow transition-all flex items-center justify-center gap-2"
                 >
-                  <span>🧪</span> Predict Chemical Interactions
+                  Predict Chemical Interactions
                 </button>
               </form>
             </div>
@@ -760,7 +763,7 @@ export default function App() {
                     : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
                 }`}
               >
-                <span>🔬</span> Predicted Reaction Products
+                Top 5 Reaction Products
               </button>
               <button
                 onClick={() => setActiveTab("reactants")}
@@ -770,7 +773,7 @@ export default function App() {
                     : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
                 }`}
               >
-                <span>🧪</span> Reactants & Components
+                Reactants & Components
               </button>
               <button
                 onClick={() => setActiveTab("reasoning")}
@@ -780,7 +783,7 @@ export default function App() {
                     : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
                 }`}
               >
-                <span>🧠</span> AI Mechanistic Framework
+                Mechanistic Framework
               </button>
             </div>
 
@@ -789,10 +792,10 @@ export default function App() {
               <div className="space-y-4">
                 <div className="my-2">
                   <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
-                    Predicted Reaction Byproducts & Degradation Products
+                    Top 5 Predicted Reaction Byproducts & Degradation Products
                   </h3>
                   <p className="text-xs sm:text-sm text-[#64748B]">
-                    Ranked by formation probability and thermodynamic stability under specified reaction conditions.
+                    Ranked strictly by formation probability and thermodynamic stability (Top 5 maximum).
                   </p>
                 </div>
 
@@ -803,6 +806,7 @@ export default function App() {
                 ) : (
                   [...result.degradationImpurities]
                     .sort((a, b) => (b.probability || 0) - (a.probability || 0))
+                    .slice(0, 5)
                     .map((imp, idx) => {
                       const prob = (imp.probability || 0) * 100;
                       const cond = imp.condition || "Direct Degradation";
@@ -861,7 +865,7 @@ export default function App() {
                             {imp.mechanismExplanation && (
                               <div className="ap1-mech-box">
                                 <div className="ap1-mech-title">
-                                  <span>⚡ Chemical Mechanism:</span>
+                                  <span>Chemical Mechanism:</span>
                                 </div>
                                 <div>{imp.mechanismExplanation}</div>
                               </div>

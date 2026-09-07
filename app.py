@@ -27,7 +27,6 @@ import pandas as pd
 # ==============================================================================
 st.set_page_config(
     page_title="INTERACTION | Chemical Interaction & Byproduct Predictor",
-    page_icon="🧪",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -681,6 +680,34 @@ def get_realistic_prediction(
                 "mechanismExplanation": "Bimolecular dehydration of two carboxyl groups under elevated dry heat conditions.",
                 "molecularDescriptors": {"MolWt": 342.30, "MolLogP": 3.65, "TPSA": 99.13},
             },
+            {
+                "iupacName": "Gentisic Acid (2,5-Dihydroxybenzoic Acid)",
+                "smiles": "O=C(O)c1cc(O)ccc1O",
+                "structureDescription": "Electrophilic aromatic hydroxylation product formed under oxidative conditions.",
+                "origin": "Aspirin",
+                "probability": 0.28,
+                "probabilityHeuristic": 0.30,
+                "probabilityBoltzmann": 0.25,
+                "relativeEnergy": -1.45,
+                "condition": "Oxidation",
+                "source": "Direct Degradation",
+                "mechanismExplanation": "Radical auto-oxidation and para-hydroxylation of the phenolic core in the presence of trace oxygen.",
+                "molecularDescriptors": {"MolWt": 154.12, "MolLogP": 1.25, "TPSA": 77.76},
+            },
+            {
+                "iupacName": "4-Hydroxyisophthalic Acid",
+                "smiles": "O=C(O)c1ccc(O)c(C(=O)O)c1",
+                "structureDescription": "Carboxylated phenolic impurity arising from high-temperature Kolbe-Schmitt side-reactions.",
+                "origin": "Aspirin",
+                "probability": 0.18,
+                "probabilityHeuristic": 0.20,
+                "probabilityBoltzmann": 0.15,
+                "relativeEnergy": 3.20,
+                "condition": "Thermal Degradation",
+                "source": "Direct Degradation",
+                "mechanismExplanation": "Thermal disproportionation and trace Kolbe-Schmitt carboxylation at the open ring positions.",
+                "molecularDescriptors": {"MolWt": 182.13, "MolLogP": 1.10, "TPSA": 97.99},
+            },
         ]
 
         if is_peg:
@@ -689,9 +716,9 @@ def get_realistic_prediction(
                 "smiles": "CC(=O)Oc1ccccc1C(=O)OCCOCCO",
                 "structureDescription": "Transesterification polymeric conjugate formed with terminal hydroxyl groups of PEG.",
                 "origin": "Aspirin + PEG",
-                "probability": 0.58,
-                "probabilityHeuristic": 0.62,
-                "probabilityBoltzmann": 0.54,
+                "probability": 0.62,
+                "probabilityHeuristic": 0.65,
+                "probabilityBoltzmann": 0.58,
                 "relativeEnergy": -1.10,
                 "condition": "Chemical Incompatibility",
                 "source": "Interaction with other compound",
@@ -726,7 +753,7 @@ def get_realistic_prediction(
             ],
             "interactionType": "Chemical" if sec_names else "Physical",
             "mechanism": "Hydrolytic ester cleavage with adjacent carboxylic acid assistance and solid-state condensation.",
-            "degradationImpurities": impurities,
+            "degradationImpurities": sorted(impurities, key=lambda x: x.get("probability", 0), reverse=True)[:5],
         }
 
     # 2. Metformin (Biguanide)
@@ -761,6 +788,34 @@ def get_realistic_prediction(
                 "mechanismExplanation": "Thermal elimination of dimethylamine under dry heat conditions.",
                 "molecularDescriptors": {"MolWt": 84.08, "MolLogP": -0.85, "TPSA": 79.52},
             },
+            {
+                "iupacName": "Melamine (Thermal Trimerization Adduct)",
+                "smiles": "c1(nc(nc(n1)N)N)N",
+                "structureDescription": "Symmetric triazine derivative formed via thermal cyclotrimerization of cyanamide intermediates.",
+                "origin": "Metformin",
+                "probability": 0.28,
+                "probabilityHeuristic": 0.30,
+                "probabilityBoltzmann": 0.25,
+                "relativeEnergy": 4.10,
+                "condition": "Thermal Degradation",
+                "source": "Direct Degradation",
+                "mechanismExplanation": "High temperature cyclocondensation of reactive cyanamide fragments generated during deamination.",
+                "molecularDescriptors": {"MolWt": 126.12, "MolLogP": -0.73, "TPSA": 116.67},
+            },
+            {
+                "iupacName": "1-Methylbiguanide",
+                "smiles": "CNC(=N)NC(=N)N",
+                "structureDescription": "Mono-demethylated related substance formed under oxidative or photolytic stress.",
+                "origin": "Metformin",
+                "probability": 0.18,
+                "probabilityHeuristic": 0.20,
+                "probabilityBoltzmann": 0.16,
+                "relativeEnergy": 2.65,
+                "condition": "Photodegradation",
+                "source": "Direct Degradation",
+                "mechanismExplanation": "Radical-induced oxidative N-dealkylation of the tertiary dimethylamino moiety.",
+                "molecularDescriptors": {"MolWt": 115.14, "MolLogP": -1.35, "TPSA": 90.76},
+            },
         ]
 
         if is_lactose:
@@ -780,6 +835,20 @@ def get_realistic_prediction(
                     "form of lactose, yielding a glycosylamine that undergoes irreversible rearrangement."
                 ),
                 "molecularDescriptors": {"MolWt": 453.45, "MolLogP": -3.10, "TPSA": 215.30},
+            })
+            impurities.append({
+                "iupacName": "5-Hydroxymethylfurfural (HMF / Sugar Degradation Byproduct)",
+                "smiles": "O=Cc1ccc(CO)o1",
+                "structureDescription": "Acid-catalyzed dehydration product of reducing hexose monosaccharides.",
+                "origin": "Lactose",
+                "probability": 0.35,
+                "probabilityHeuristic": 0.38,
+                "probabilityBoltzmann": 0.32,
+                "relativeEnergy": -1.80,
+                "condition": "Thermal Degradation",
+                "source": "Interaction with other compound",
+                "mechanismExplanation": "Triple dehydration of aldose / ketose sugars accelerated by amine base catalysts.",
+                "molecularDescriptors": {"MolWt": 126.11, "MolLogP": 0.34, "TPSA": 39.44},
             })
 
         return {
@@ -809,11 +878,84 @@ def get_realistic_prediction(
             ],
             "interactionType": "Chemical" if is_lactose else "Physical",
             "mechanism": "Condensation reaction with aldose reducing sugars and hydrolytic deamination.",
-            "degradationImpurities": impurities,
+            "degradationImpurities": sorted(impurities, key=lambda x: x.get("probability", 0), reverse=True)[:5],
         }
 
     # 3. Paracetamol (Acetaminophen)
     elif "paracetamol" in p_lower or "acetaminophen" in p_lower or "Nc1ccc(O)cc1" in p_name:
+        impurities = [
+            {
+                "iupacName": "4-Aminophenol (Hydrolysis Product)",
+                "smiles": "Nc1ccc(O)cc1",
+                "structureDescription": "Deacetylated core aminophenol formed by amide hydrolysis.",
+                "origin": "Paracetamol",
+                "probability": 0.82,
+                "probabilityHeuristic": 0.85,
+                "probabilityBoltzmann": 0.78,
+                "relativeEnergy": -3.10,
+                "condition": "Acidic / Basic Hydrolysis",
+                "source": "Direct Degradation",
+                "mechanismExplanation": "Acid or base-catalyzed nucleophilic acyl substitution of the amide carbonyl by water.",
+                "molecularDescriptors": {"MolWt": 109.13, "MolLogP": 0.04, "TPSA": 46.25},
+            },
+            {
+                "iupacName": "N-Acetyl-p-benzoquinone Imine (NAPQI)",
+                "smiles": "CC(=O)N=C1C=CC(=O)C=C1",
+                "structureDescription": "Electrophilic quinone imine oxidation intermediate.",
+                "origin": "Paracetamol",
+                "probability": 0.48,
+                "probabilityHeuristic": 0.45,
+                "probabilityBoltzmann": 0.50,
+                "relativeEnergy": 1.95,
+                "condition": "Oxidation",
+                "source": "Interaction with other compound" if sec_names else "Direct Degradation",
+                "mechanismExplanation": "Two-electron oxidation of the phenolic system catalyzed by trace peroxide impurities in additives.",
+                "molecularDescriptors": {"MolWt": 149.15, "MolLogP": 0.72, "TPSA": 46.17},
+            },
+            {
+                "iupacName": "4-(4-Hydroxyphenyl)aminophenol (Dimer Adduct)",
+                "smiles": "Oc1ccc(Nc2ccc(O)cc2)cc1",
+                "structureDescription": "Oxidative coupling dimer formed through radical addition of phenoxy/anilide radicals.",
+                "origin": "Paracetamol",
+                "probability": 0.35,
+                "probabilityHeuristic": 0.38,
+                "probabilityBoltzmann": 0.32,
+                "relativeEnergy": 2.40,
+                "condition": "Oxidation",
+                "source": "Direct Degradation",
+                "mechanismExplanation": "Bimolecular radical coupling between transient semi-oxidized phenoxyl intermediates.",
+                "molecularDescriptors": {"MolWt": 201.22, "MolLogP": 2.10, "TPSA": 52.48},
+            },
+            {
+                "iupacName": "Hydroquinone (Oxidative Deaminated Product)",
+                "smiles": "Oc1ccc(O)cc1",
+                "structureDescription": "1,4-Dihydroxybenzene formed via hydrolytic elimination of the imine intermediate.",
+                "origin": "Paracetamol",
+                "probability": 0.24,
+                "probabilityHeuristic": 0.26,
+                "probabilityBoltzmann": 0.22,
+                "relativeEnergy": 0.85,
+                "condition": "Oxidation",
+                "source": "Direct Degradation",
+                "mechanismExplanation": "Nucleophilic attack of water on the C-4 carbon of NAPQI releasing acetamide.",
+                "molecularDescriptors": {"MolWt": 110.11, "MolLogP": 0.59, "TPSA": 40.46},
+            },
+            {
+                "iupacName": "4-Acetamido-2-hydroxyphenol",
+                "smiles": "CC(=O)Nc1ccc(O)c(O)c1",
+                "structureDescription": "Catechol derivative formed by electrophilic aromatic ortho-hydroxylation.",
+                "origin": "Paracetamol",
+                "probability": 0.18,
+                "probabilityHeuristic": 0.20,
+                "probabilityBoltzmann": 0.15,
+                "relativeEnergy": -0.90,
+                "condition": "Photodegradation",
+                "source": "Direct Degradation",
+                "mechanismExplanation": "Photochemically activated hydroxyl radical attack on the aromatic ring ortho to the hydroxyl group.",
+                "molecularDescriptors": {"MolWt": 167.16, "MolLogP": 0.35, "TPSA": 69.56},
+            },
+        ]
+
         return {
             "chainOfThought": (
                 "1. Acetaminophen contains an oxidizable phenolic hydroxyl and a secondary acetamide linkage.\n"
@@ -831,39 +973,83 @@ def get_realistic_prediction(
             ],
             "interactionType": "Chemical" if sec_names else "Physical",
             "mechanism": "Amide bond hydrolytic cleavage and peroxide-induced phenolic oxidation.",
-            "degradationImpurities": [
-                {
-                    "iupacName": "4-Aminophenol",
-                    "smiles": "Nc1ccc(O)cc1",
-                    "structureDescription": "Deacetylated core aminophenol formed by amide hydrolysis.",
-                    "origin": "Paracetamol",
-                    "probability": 0.82,
-                    "probabilityHeuristic": 0.85,
-                    "probabilityBoltzmann": 0.78,
-                    "relativeEnergy": -3.10,
-                    "condition": "Acidic / Basic Hydrolysis",
-                    "source": "Direct Degradation",
-                    "mechanismExplanation": "Acid or base-catalyzed nucleophilic acyl substitution of the amide carbonyl by water.",
-                    "molecularDescriptors": {"MolWt": 109.13, "MolLogP": 0.04, "TPSA": 46.25},
-                },
-                {
-                    "iupacName": "N-Acetyl-p-benzoquinone Imine (NAPQI)",
-                    "smiles": "CC(=O)N=C1C=CC(=O)C=C1",
-                    "structureDescription": "Electrophilic quinone imine oxidation intermediate.",
-                    "origin": "Paracetamol",
-                    "probability": 0.48,
-                    "probabilityHeuristic": 0.45,
-                    "probabilityBoltzmann": 0.50,
-                    "relativeEnergy": 1.95,
-                    "condition": "Oxidation",
-                    "source": "Interaction with other compound" if sec_names else "Direct Degradation",
-                    "mechanismExplanation": "Two-electron oxidation of the phenolic system catalyzed by trace peroxide impurities in additives.",
-                    "molecularDescriptors": {"MolWt": 149.15, "MolLogP": 0.72, "TPSA": 46.17},
-                },
-            ],
+            "degradationImpurities": sorted(impurities, key=lambda x: x.get("probability", 0), reverse=True)[:5],
         }
 
     # 4. General Molecular Decomposition Fallback
+    fallback_impurities = [
+        {
+            "iupacName": f"Desacyl / Cleavage Product of {p_name}",
+            "smiles": "Nc1ccc(O)cc1",
+            "structureDescription": "Hydrolytic cleavage of labile functional bonds.",
+            "origin": p_name,
+            "probability": 0.75,
+            "probabilityHeuristic": 0.78,
+            "probabilityBoltzmann": 0.72,
+            "relativeEnergy": -2.10,
+            "condition": "Acidic Hydrolysis",
+            "source": "Direct Degradation",
+            "mechanismExplanation": "Solvolysis of primary heteroatom linkages under elevated moisture and thermal activation.",
+            "molecularDescriptors": {"MolWt": 109.13, "MolLogP": 0.04, "TPSA": 46.25},
+        },
+        {
+            "iupacName": f"Quinone / Oxidative Adduct of {p_name}",
+            "smiles": "O=C1C=CC(=O)C=C1",
+            "structureDescription": "Electron transfer oxidation forming conjugate quinoid substance.",
+            "origin": p_name,
+            "probability": 0.42,
+            "probabilityHeuristic": 0.40,
+            "probabilityBoltzmann": 0.45,
+            "relativeEnergy": 1.35,
+            "condition": "Oxidation",
+            "source": "Direct Degradation",
+            "mechanismExplanation": "Radical auto-oxidation via atmospheric oxygen or trace catalysis.",
+            "molecularDescriptors": {"MolWt": 108.09, "MolLogP": 0.35, "TPSA": 34.14},
+        },
+        {
+            "iupacName": f"Dimeric Condensation Adduct of {p_name}",
+            "smiles": "Oc1ccc(Nc2ccc(O)cc2)cc1",
+            "structureDescription": "Intermolecular condensation coupling adduct formed under thermal activation.",
+            "origin": p_name,
+            "probability": 0.34,
+            "probabilityHeuristic": 0.36,
+            "probabilityBoltzmann": 0.30,
+            "relativeEnergy": 2.20,
+            "condition": "Thermal Degradation",
+            "source": "Direct Degradation",
+            "mechanismExplanation": "Thermal bimolecular coupling with elimination of small molecule byproducts.",
+            "molecularDescriptors": {"MolWt": 201.22, "MolLogP": 2.10, "TPSA": 52.48},
+        },
+        {
+            "iupacName": f"Decarboxylation / Dehydration Product of {p_name}",
+            "smiles": "c1ccccc1O",
+            "structureDescription": "Thermal extrusion of carbon dioxide or water yielding stripped aromatic core.",
+            "origin": p_name,
+            "probability": 0.25,
+            "probabilityHeuristic": 0.27,
+            "probabilityBoltzmann": 0.22,
+            "relativeEnergy": 3.80,
+            "condition": "Thermal Degradation",
+            "source": "Direct Degradation",
+            "mechanismExplanation": "Pyrolytic cleavage of peripheral polar groups under prolonged thermal exposure.",
+            "molecularDescriptors": {"MolWt": 94.11, "MolLogP": 1.48, "TPSA": 20.23},
+        },
+        {
+            "iupacName": f"Hydroxylated Oxidation Intermediate of {p_name}",
+            "smiles": "Oc1ccc(O)cc1",
+            "structureDescription": "Electrophilic radical hydroxylation of aromatic or aliphatic sites.",
+            "origin": p_name,
+            "probability": 0.19,
+            "probabilityHeuristic": 0.22,
+            "probabilityBoltzmann": 0.17,
+            "relativeEnergy": -0.65,
+            "condition": "Oxidation",
+            "source": "Direct Degradation",
+            "mechanismExplanation": "Singlet oxygen or peroxide-mediated hydroxylation of electron-rich centers.",
+            "molecularDescriptors": {"MolWt": 110.11, "MolLogP": 0.59, "TPSA": 40.46},
+        },
+    ]
+
     return {
         "chainOfThought": (
             f"1. Systematic Chemical Evaluation: Analyzing '{p_name}' "
@@ -891,36 +1077,7 @@ def get_realistic_prediction(
         ],
         "interactionType": "Chemical" if sec_names else "Physical",
         "mechanism": "Oxidative bond dissociation, hydrolytic cleavage, and stress rearrangement.",
-        "degradationImpurities": [
-            {
-                "iupacName": f"Desacyl / Cleavage Product of {p_name}",
-                "smiles": "Nc1ccc(O)cc1",
-                "structureDescription": "Hydrolytic cleavage of labile functional bonds.",
-                "origin": p_name,
-                "probability": 0.75,
-                "probabilityHeuristic": 0.78,
-                "probabilityBoltzmann": 0.72,
-                "relativeEnergy": -2.10,
-                "condition": "Acidic Hydrolysis",
-                "source": "Direct Degradation",
-                "mechanismExplanation": "Solvolysis of primary heteroatom linkages under elevated moisture and thermal activation.",
-                "molecularDescriptors": {"MolWt": 109.13, "MolLogP": 0.04, "TPSA": 46.25},
-            },
-            {
-                "iupacName": f"Quinone / Oxidative Adduct of {p_name}",
-                "smiles": "O=C1C=CC(=O)C=C1",
-                "structureDescription": "Electron transfer oxidation forming conjugate quinoid substance.",
-                "origin": p_name,
-                "probability": 0.42,
-                "probabilityHeuristic": 0.40,
-                "probabilityBoltzmann": 0.45,
-                "relativeEnergy": 1.35,
-                "condition": "Oxidation",
-                "source": "Direct Degradation",
-                "mechanismExplanation": "Radical auto-oxidation via atmospheric oxygen or trace catalysis.",
-                "molecularDescriptors": {"MolWt": 108.09, "MolLogP": 0.35, "TPSA": 34.14},
-            },
-        ],
+        "degradationImpurities": sorted(fallback_impurities, key=lambda x: x.get("probability", 0), reverse=True)[:5],
     }
 
 
@@ -952,7 +1109,7 @@ def run_gemini_prediction(
 
     prompt = f"""
 You are an elite computational chemist specializing in chemical reaction modeling, cross-interactions, and degradation pathways.
-Analyze the following chemical mixture. Predict specific reaction byproducts and degradation products (IUPAC name, valid canonical SMILES adhering strictly to chemical valence, probability, mechanism, stress condition).
+Analyze the following chemical mixture. Predict ONLY the TOP 5 most significant reaction byproducts and degradation products, ranked strictly in descending order of formation probability and thermodynamic stability. Under no circumstances should you return more than 5 products.
 
 MIXTURE INPUTS:
 {compounds_text}
@@ -1017,14 +1174,22 @@ Return ONLY a single valid JSON object matching this schema:
                 if smi:
                     comp["molecularDescriptors"] = get_mol_descriptors(smi)
 
-            for imp in data.get("degradationImpurities", []):
-                smi = imp.get("smiles", "")
-                if smi:
-                    imp["molecularDescriptors"] = get_mol_descriptors(smi)
-                    if imp.get("relativeEnergy") is None:
-                        calc_e = compute_relative_energy(smi)
-                        if calc_e is not None:
-                            imp["relativeEnergy"] = calc_e
+            # Enforce top 5 products sorted by formation probability
+            raw_imps = data.get("degradationImpurities", [])
+            if isinstance(raw_imps, list):
+                for imp in raw_imps:
+                    smi = imp.get("smiles", "")
+                    if smi:
+                        imp["molecularDescriptors"] = get_mol_descriptors(smi)
+                        if imp.get("relativeEnergy") is None:
+                            calc_e = compute_relative_energy(smi)
+                            if calc_e is not None:
+                                imp["relativeEnergy"] = calc_e
+                data["degradationImpurities"] = sorted(
+                    raw_imps,
+                    key=lambda x: x.get("probability", 0),
+                    reverse=True,
+                )[:5]
 
             return data
 
@@ -1071,13 +1236,13 @@ def create_excel_report(result: Dict[str, Any]) -> bytes:
         if comp_rows:
             pd.DataFrame(comp_rows).to_excel(writer, sheet_name="Input Mixture", index=False)
 
-        # Impurities Sheet
+        # Top 5 Products Sheet
         imp_rows = []
         for imp in sorted(
             result.get("degradationImpurities", []),
             key=lambda x: x.get("probability", 0),
             reverse=True,
-        ):
+        )[:5]:
             mw = imp.get("molecularDescriptors", {}).get("MolWt", "N/A")
             prob = f"{imp.get('probability', 0) * 100:.1f}%" if imp.get("probability") is not None else "N/A"
             h_prob = f"{imp.get('probabilityHeuristic', 0) * 100:.1f}%" if imp.get("probabilityHeuristic") is not None else "N/A"
@@ -1099,7 +1264,7 @@ def create_excel_report(result: Dict[str, Any]) -> bytes:
                 "Mechanism Explanation": imp.get("mechanismExplanation", "N/A"),
             })
         if imp_rows:
-            pd.DataFrame(imp_rows).to_excel(writer, sheet_name="Predicted Impurities", index=False)
+            pd.DataFrame(imp_rows).to_excel(writer, sheet_name="Top 5 Products", index=False)
 
     return output.getvalue()
 
@@ -1162,12 +1327,12 @@ if st.session_state.view == "input":
     # Card 1: Mixture Builder (Native Streamlit Elevated Container)
     with st.container(border=True):
         st.markdown("""
-        <div style="margin-bottom: 1.25rem;">
-            <div style="font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 700; color: #0F172A;">
+        <div style="margin-bottom: 1rem;">
+            <div style="font-family: 'Playfair Display', serif; font-size: 1.35rem; font-weight: 700; color: #0F172A;">
                 Reaction Mixture Setup
             </div>
-            <div style="font-size: 0.88rem; color: #64748B;">
-                Define the primary chemical compound and optional secondary co-reactants or additives.
+            <div style="font-size: 0.86rem; color: #64748B;">
+                Define the primary chemical compound and secondary additives to predict the <strong>top 5 reaction & degradation products</strong>.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1199,12 +1364,12 @@ if st.session_state.view == "input":
             )
             st.session_state.primary_compound = {"value": p_val, "type": p_format}
 
-        st.markdown("<div style='height: 1.25rem;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
 
         # Section: Secondary Compounds
         sec_count = len([s for s in st.session_state.secondary_compounds if s.get("value", "").strip()])
         st.markdown(f"""
-        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; font-weight: 700; color: #334155; margin-bottom: 0.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; font-weight: 700; color: #334155; margin-bottom: 0.45rem;">
             <div style="display: flex; align-items: center; gap: 0.4rem;">
                 <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #94A3B8;"></span>
                 Secondary Compounds (Co-reactants / Additives)
@@ -1217,7 +1382,7 @@ if st.session_state.view == "input":
 
         # Render each secondary input row
         for s_idx, sec in enumerate(st.session_state.secondary_compounds):
-            s_col1, s_col2, s_col3 = st.columns([1.2, 4.2, 0.6])
+            s_col1, s_col2, s_col3 = st.columns([1.2, 4.0, 0.8])
             with s_col1:
                 cur_fmt = sec.get("type", "Name")
                 fmt_idx = ["Name", "SMILES"].index(cur_fmt) if cur_fmt in ["Name", "SMILES"] else 0
@@ -1238,7 +1403,7 @@ if st.session_state.view == "input":
                 )
                 st.session_state.secondary_compounds[s_idx] = {"value": s_val, "type": s_fmt}
             with s_col3:
-                if st.button("✕", key=f"btn_del_sec_{s_idx}", help="Remove compound"):
+                if st.button("Remove", key=f"btn_del_sec_{s_idx}"):
                     st.session_state.secondary_compounds.pop(s_idx)
                     if len(st.session_state.secondary_compounds) == 0:
                         st.session_state.secondary_compounds = [{"value": "", "type": "Name"}]
@@ -1250,30 +1415,30 @@ if st.session_state.view == "input":
                 st.session_state.secondary_compounds.append({"value": "", "type": "Name"})
                 st.rerun()
 
-        st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height: 1.25rem;'></div>", unsafe_allow_html=True)
 
         # Section: Prediction Method
-        st.markdown("<div style='font-size: 0.75rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;'>Prediction Engine & Methodology:</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size: 0.75rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.45rem;'>Prediction Engine & Methodology:</div>", unsafe_allow_html=True)
         
         method_choice = st.radio(
             "Methodology",
             options=["Both", "Heuristic", "Boltzmann"],
             format_func=lambda x: {
-                "Both": "Dual Engine (Heuristic Kinetic Rules + Boltzmann Thermodynamic ΔG)",
-                "Heuristic": "Heuristic / AI (Expert Kinetic Activation & Transition States)",
-                "Boltzmann": "Boltzmann / Physics (Thermodynamic Free Energy ΔG Distribution at 298.15K)",
+                "Both": "Dual Engine (Kinetic Rules + Thermodynamic ΔG)",
+                "Heuristic": "Heuristic (Kinetic Activation & Transition States)",
+                "Boltzmann": "Boltzmann (Thermodynamic Free Energy ΔG at 298.15K)",
             }[x],
             index=["Both", "Heuristic", "Boltzmann"].index(st.session_state.method),
-            horizontal=False,
+            horizontal=True,
             key="method_radio",
             label_visibility="collapsed",
         )
         st.session_state.method = method_choice
 
-        st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height: 1.25rem;'></div>", unsafe_allow_html=True)
 
         # Submit CTA Button
-        if st.button("🧪 Predict Chemical Interactions", type="primary", use_container_width=True):
+        if st.button("Predict Reaction Products", type="primary", use_container_width=True):
             primary_val = st.session_state.primary_compound["value"].strip()
             if not primary_val:
                 st.warning("Please specify a primary compound to analyze.")
@@ -1350,32 +1515,33 @@ elif st.session_state.view == "results" and st.session_state.result:
     with col_t2:
         excel_data = create_excel_report(res)
         st.download_button(
-            label="📥 Download Excel Interaction Report",
+            label="Download Excel Report (Top 5 Products)",
             data=excel_data,
-            file_name=f"Interaction_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            file_name=f"Interaction_Top5_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
 
     st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
 
-    # Executive Summary Metrics
+    # Executive Summary Metrics (Top 5 Products)
     impurities = res.get("degradationImpurities", [])
-    max_prob = max([imp.get("probability", 0) for imp in impurities], default=0.0)
-    min_dG = min([imp.get("relativeEnergy", 0) for imp in impurities if imp.get("relativeEnergy") is not None], default=None)
+    sorted_impurities = sorted(impurities, key=lambda x: x.get("probability", 0), reverse=True)[:5]
+    max_prob = max([imp.get("probability", 0) for imp in sorted_impurities], default=0.0)
+    min_dG = min([imp.get("relativeEnergy", 0) for imp in sorted_impurities if imp.get("relativeEnergy") is not None], default=None)
 
     m_col1, m_col2, m_col3, m_col4 = st.columns(4)
     with m_col1:
         st.metric(
-            label="Reaction Products",
-            value=len(impurities),
-            help="Total predicted transformation and interaction products identified.",
+            label="Top Products",
+            value=f"{len(sorted_impurities)} / 5",
+            help="Top 5 predicted transformation and interaction products identified.",
         )
     with m_col2:
         st.metric(
-            label="Highest Probability",
+            label="Highest Likelihood",
             value=f"{max_prob * 100:.1f}%",
-            help="Maximum formation likelihood among the identified products.",
+            help="Maximum formation likelihood among the identified top products.",
         )
     with m_col3:
         st.metric(
@@ -1395,9 +1561,9 @@ elif st.session_state.view == "results" and st.session_state.result:
 
     # Tabbed Analytical Views
     tab_overview, tab_impurities, tab_reasoning = st.tabs([
-        "🔬 Predicted Reaction Products",
-        "🧪 Reactants & Components",
-        "🧠 AI Mechanistic Framework",
+        "Top 5 Reaction Products",
+        "Reactants & Components",
+        "Mechanistic Framework",
     ])
 
     # Tab 1: Predicted Products
@@ -1405,18 +1571,17 @@ elif st.session_state.view == "results" and st.session_state.result:
         st.markdown("""
         <div style="margin: 1rem 0 1.25rem 0;">
             <h3 style="font-family: 'Playfair Display', serif; font-size: 1.35rem; font-weight: 700; color: #0F172A; margin-bottom: 0.25rem;">
-                Predicted Reaction Byproducts & Degradation Products
+                Top 5 Predicted Reaction Byproducts & Degradation Products
             </h3>
             <p style="font-size: 0.85rem; color: #64748B; margin: 0;">
-                Ranked by formation probability and thermodynamic stability under specified reaction conditions.
+                Ranked strictly by formation probability and thermodynamic stability (Top 5 maximum).
             </p>
         </div>
         """, unsafe_allow_html=True)
 
-        if not impurities:
+        if not sorted_impurities:
             st.info("No significant byproducts detected under standard conditions.")
         else:
-            sorted_impurities = sorted(impurities, key=lambda x: x.get("probability", 0), reverse=True)
             for idx, imp in enumerate(sorted_impurities):
                 smi = imp.get("smiles", "")
                 svg_raw = get_mol_svg(smi, width=250, height=250)
@@ -1479,7 +1644,7 @@ elif st.session_state.view == "results" and st.session_state.result:
 
                         <div class="ap1-mech-box">
                             <div class="ap1-mech-title">
-                                <span>⚡ Chemical Mechanism:</span>
+                                <span>Chemical Mechanism:</span>
                             </div>
                             <div>{imp.get('mechanismExplanation', '')}</div>
                         </div>
@@ -1575,7 +1740,7 @@ elif st.session_state.view == "results" and st.session_state.result:
             st.markdown("""
             <div style="font-size: 0.85rem; color: #475569; line-height: 1.6;">
                 <strong style="color: #0F172A; display: block; margin-bottom: 0.35rem;">
-                    📋 Chemical Reaction & Byproduct Analysis:
+                    Chemical Reaction & Byproduct Analysis:
                 </strong>
                 Products identified with high formation probability or favorable exergonic free energy (ΔG &lt; 0 kcal/mol) represent dominant reaction pathways. In experimental validation, these byproducts should be verified using analytical separation techniques (HPLC, LC-MS, GC-MS, or NMR).
             </div>
