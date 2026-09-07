@@ -14,6 +14,8 @@ import json
 import re
 import time
 import io
+import base64
+import urllib.parse
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -509,9 +511,11 @@ PRESET_COMPOUNDS: Dict[str, Dict[str, Any]] = {
 # 3. Chemical Vector SVG Generator & Descriptors
 # ==============================================================================
 def svg_to_data_uri(svg_str: str) -> str:
-    """Encodes SVG string to a data URI for 100% reliable rendering in Streamlit markdown."""
-    encoded = urllib.parse.quote(svg_str)
-    return f"data:image/svg+xml;utf8,{encoded}"
+    """Encodes SVG string to a base64 data URI for 100% reliable rendering in Streamlit markdown."""
+    if not svg_str:
+        return ""
+    b64 = base64.b64encode(svg_str.strip().encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{b64}"
 
 
 @st.cache_data(show_spinner=False)
