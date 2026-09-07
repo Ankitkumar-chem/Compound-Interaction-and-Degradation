@@ -211,6 +211,11 @@ export default function App() {
 
       let switchedView = false;
       const prediction = await predictInteraction(validInputsWithDescriptors, predictionMethod, (partial) => {
+        if (partial.degradationImpurities) {
+          partial.degradationImpurities = [...partial.degradationImpurities]
+            .sort((a, b) => (b.probability || 0) - (a.probability || 0))
+            .slice(0, 5);
+        }
         if (!switchedView && (
           (partial.chainOfThought && partial.chainOfThought.length > 0) || 
           (partial.compounds && partial.compounds.length > 0)
@@ -223,7 +228,9 @@ export default function App() {
       });
       
       if (prediction.degradationImpurities) {
-        prediction.degradationImpurities = prediction.degradationImpurities.slice(0, 5);
+        prediction.degradationImpurities = [...prediction.degradationImpurities]
+          .sort((a, b) => (b.probability || 0) - (a.probability || 0))
+          .slice(0, 5);
       }
 
       // Calculate real molecular descriptors (Molecular Weight) using RDKit in parallel
@@ -347,11 +354,15 @@ export default function App() {
       });
       rows.push([]);
 
-      // 2. Impurities Section
-      if (result.degradationImpurities && result.degradationImpurities.length > 0) {
-        rows.push(["PREDICTED REACTION PRODUCTS & BYPRODUCTS"]);
-        const hasEnergy = result.degradationImpurities.some(i => i.relativeEnergy != null);
-        const hasBoth = result.degradationImpurities.some(i => i.probabilityHeuristic != null);
+      // 2. Impurities Section (Top 5 Byproducts)
+      const topImpurities = [...(result.degradationImpurities || [])]
+        .sort((a, b) => (b.probability || 0) - (a.probability || 0))
+        .slice(0, 5);
+
+      if (topImpurities.length > 0) {
+        rows.push(["PREDICTED REACTION PRODUCTS & BYPRODUCTS (TOP 5)"]);
+        const hasEnergy = topImpurities.some(i => i.relativeEnergy != null);
+        const hasBoth = topImpurities.some(i => i.probabilityHeuristic != null);
         
         const header = ["IUPAC Name", "SMILES", "MW (g/mol)", "Main Probability (%)"];
         if (hasBoth) {
@@ -361,9 +372,7 @@ export default function App() {
         header.push("Origin", "Condition", "Source", "Description");
         rows.push(header);
 
-        [...result.degradationImpurities]
-          .sort((a, b) => (b.probability || 0) - (a.probability || 0))
-          .forEach(i => {
+        topImpurities.forEach(i => {
             const row = [
               i.iupacName,
               i.smiles,
@@ -697,27 +706,74 @@ export default function App() {
         )}
 
         {/* View: Results Dashboard Matching Streamlit */}
-        {view === 'results' && result && !loading && (
-          <div className="w-full space-y-6">
-            {/* Action Toolbar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-              <button
-                onClick={() => { setView('input'); setResult(null); }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#CBD5E1] text-[#334155] hover:bg-[#F8FAFC] font-medium text-xs rounded-lg transition-colors shadow-xs"
-              >
-                ← Back to Reaction Setup
-              </button>
-              <button
-                onClick={downloadExcel}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#CBD5E1] hover:border-[#94A3B8] text-[#334155] hover:text-[#0F172A] hover:bg-[#F8FAFC] font-medium text-xs rounded-lg transition-colors shadow-xs"
-              >
-                Download Excel Report
-              </button>
-            </div>
+        {view === 'results' && result && !loading && (() => {
+          // Explicitly constrain degradationImpurities to only the top 5 elements ranked by formation probability
+          const topImpurities = [...(result.degradationImpurities || [])]
+            .sort((a, b) => (b.probability || 0) - (a.probability || 0))
+            .slice(0, 5);
 
-            {/* 1. Top Part: Input Chemical Data */}
-            <div className="space-y-4 pt-2">
-              <div>
+          const maxProb = topImpurities.length > 0 ? Math.max(...topImpurities.map(i => i.probability || 0)) : 0;
+          const energies = topImpurities.map(i => i.relativeEnergy).filter((e): e is number => e != null);
+          const minEnergy = energies.length > 0 ? Math.min(...energies) : null;
+
+          return (
+            <div className="w-full space-y-6">
+              {/* Action Toolbar */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                <button
+                  onClick={() => { setView('input'); setResult(null); }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#CBD5E1] text-[#334155] hover:bg-[#F8FAFC] font-medium text-xs rounded-lg transition-colors shadow-xs"
+                >
+                  ← Back to Reaction Setup
+                </button>
+                <button
+                  onClick={downloadExcel}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#CBD5E1] hover:border-[#94A3B8] text-[#334155] hover:text-[#0F172A] hover:bg-[#F8FAFC] font-medium text-xs rounded-lg transition-colors shadow-xs"
+                >
+                  Download Excel Report
+                </button>
+              </div>
+
+              {/* 1. Executive Summary Card */}
+              <section className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-xs">
+                <div className="mb-4">
+                  <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
+                    Executive Summary
+                  </h3>
+                  <p className="text-xs sm:text-sm text-[#64748B]">
+                    Calculated key thermodynamic and kinetic performance indicators for the reaction system.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
+                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Reaction Products</div>
+                    <div className="text-2xl font-extrabold text-[#0F172A]">{topImpurities.length}</div>
+                    <div className="text-[10px] text-[#94A3B8] mt-1">Total identified transformation products (Top 5)</div>
+                  </div>
+                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
+                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Highest Probability</div>
+                    <div className="text-2xl font-extrabold text-[#4F46E5]">{(maxProb * 100).toFixed(1)}%</div>
+                    <div className="text-[10px] text-[#94A3B8] mt-1">Maximum formation likelihood</div>
+                  </div>
+                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
+                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Interaction Nature</div>
+                    <div className="text-2xl font-extrabold text-[#0F172A]">{result.interactionType || "Chemical"}</div>
+                    <div className="text-[10px] text-[#94A3B8] mt-1">Dominant interaction classification</div>
+                  </div>
+                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
+                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Lowest ΔG (Driving Force)</div>
+                    <div className="text-2xl font-extrabold text-[#0F172A] font-mono">
+                      {minEnergy !== null ? `${minEnergy.toFixed(2)} kcal/mol` : "Calculated"}
+                    </div>
+                    <div className="text-[10px] text-[#94A3B8] mt-1">Most exergonic thermodynamic pathway</div>
+                  </div>
+                </div>
+              </section>
+
+            {/* 2. Input Chemical Data Card */}
+            <section className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-xs">
+              <div className="mb-5">
                 <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
                   Input Chemical Data
                 </h3>
@@ -726,58 +782,60 @@ export default function App() {
                 </p>
               </div>
 
-              {(result.compounds || []).map((comp, idx) => {
-                const mw = comp.molecularDescriptors?.MolWt;
-                const role = idx === 0 ? "Primary Compound" : `Secondary Compound ${idx}`;
-                const roleClass = idx === 0 ? "role-primary" : "role-secondary";
+              <div className="flex flex-col gap-4">
+                {(result.compounds || []).map((comp, idx) => {
+                  const mw = comp.molecularDescriptors?.MolWt;
+                  const role = idx === 0 ? "Primary Compound" : `Secondary Compound ${idx}`;
+                  const roleClass = idx === 0 ? "role-primary" : "role-secondary";
 
-                return (
-                  <div key={`comp-card-${idx}`} className="ap1-comp-card flex-col sm:flex-row">
-                    <div className="ap1-comp-mol">
-                      <span className="ap1-comp-badge">C{idx + 1}</span>
-                      {comp.smiles ? (
-                        <ChemicalStructure smiles={comp.smiles} width={180} height={180} />
-                      ) : (
-                        <div className="w-36 h-36 bg-slate-100 rounded-lg animate-pulse" />
-                      )}
-                    </div>
-                    <div className="ap1-comp-info">
-                      <div className="flex items-center mb-1">
-                        <span className="ap1-comp-name">{comp.name || "Compound"}</span>
-                        <span className={`ap1-comp-role ${roleClass}`}>{role}</span>
+                  return (
+                    <div key={`comp-card-${idx}`} className="ap1-comp-card flex-col sm:flex-row w-full">
+                      <div className="ap1-comp-mol">
+                        <span className="ap1-comp-badge">C{idx + 1}</span>
+                        {comp.smiles ? (
+                          <ChemicalStructure smiles={comp.smiles} width={180} height={180} />
+                        ) : (
+                          <div className="w-36 h-36 bg-slate-100 rounded-lg animate-pulse" />
+                        )}
                       </div>
-                      {comp.smiles && (
-                        <div className="ap1-smiles-box" title={comp.smiles}>
-                          {comp.smiles}
+                      <div className="ap1-comp-info">
+                        <div className="flex items-center mb-1">
+                          <span className="ap1-comp-name">{comp.name || "Compound"}</span>
+                          <span className={`ap1-comp-role ${roleClass}`}>{role}</span>
                         </div>
-                      )}
-                      <div className="ap1-tag-group">
-                        {mw && <span className="ap1-pill mw">MW: {mw.toFixed(2)} g/mol</span>}
-                        {(comp.features || []).map((f, fi) => (
-                          <span key={fi} className="ap1-pill">{f}</span>
-                        ))}
+                        {comp.smiles && (
+                          <div className="ap1-smiles-box" title={comp.smiles}>
+                            {comp.smiles}
+                          </div>
+                        )}
+                        <div className="ap1-tag-group">
+                          {mw && <span className="ap1-pill mw">MW: {mw.toFixed(2)} g/mol</span>}
+                          {(comp.features || []).map((f, fi) => (
+                            <span key={fi} className="ap1-pill">{f}</span>
+                          ))}
+                        </div>
+                        {comp.interactionSites && comp.interactionSites.length > 0 && (
+                          <div className="mt-3">
+                            <div className="text-[11px] font-bold text-[#4F46E5] uppercase tracking-wider mb-1">
+                              Reactive Interaction Centers:
+                            </div>
+                            <div className="ap1-tag-group">
+                              {comp.interactionSites.map((site, si) => (
+                                <span key={si} className="ap1-pill site">{site}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      {comp.interactionSites && comp.interactionSites.length > 0 && (
-                        <div className="mt-3">
-                          <div className="text-[11px] font-bold text-[#4F46E5] uppercase tracking-wider mb-1">
-                            Reactive Interaction Centers:
-                          </div>
-                          <div className="ap1-tag-group">
-                            {comp.interactionSites.map((site, si) => (
-                              <span key={si} className="ap1-pill site">{site}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            </section>
 
-            {/* 2. Mechanistic Framework Evaluation */}
-            <div className="space-y-4 pt-4 border-t border-[#E2E8F0]">
-              <div>
+            {/* 3. Mechanistic Framework Evaluation Card */}
+            <section className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-xs">
+              <div className="mb-5">
                 <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
                   Mechanistic Framework Evaluation
                 </h3>
@@ -786,23 +844,23 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 sm:p-7 shadow-[0_1px_3px_rgba(15,23,42,0.03)]">
-                <div className="text-sm text-[#334155] leading-relaxed whitespace-pre-wrap font-sans">
+              <div className="flex flex-col gap-4">
+                <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-5 text-sm text-[#334155] leading-relaxed whitespace-pre-wrap font-sans">
                   {result.chainOfThought || "No detailed reasoning chain provided."}
                 </div>
-              </div>
 
-              <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl p-5 text-xs text-[#475569] leading-relaxed">
-                <strong className="text-[#0F172A] block mb-1 text-sm font-semibold">
-                  Chemical Reaction & Byproduct Analysis:
-                </strong>
-                Products identified with high formation probability or favorable exergonic free energy (ΔG &lt; 0 kcal/mol) represent dominant reaction pathways. In experimental validation, these byproducts should be verified using analytical separation techniques (HPLC, LC-MS, GC-MS, or NMR).
+                <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 text-xs text-[#475569] leading-relaxed">
+                  <strong className="text-[#0F172A] block mb-1 text-sm font-semibold">
+                    Chemical Reaction & Byproduct Analysis:
+                  </strong>
+                  Products identified with high formation probability or favorable exergonic free energy (ΔG &lt; 0 kcal/mol) represent dominant reaction pathways. In experimental validation, these byproducts should be verified using analytical separation techniques (HPLC, LC-MS, GC-MS, or NMR).
+                </div>
               </div>
-            </div>
+            </section>
 
-            {/* 3. Degradation Products and Details (Top 5) */}
-            <div className="space-y-4 pt-4 border-t border-[#E2E8F0]">
-              <div>
+            {/* 4. Degradation Products and Details Card */}
+            <section className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-xs">
+              <div className="mb-5">
                 <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
                   Degradation Products and Details
                 </h3>
@@ -811,15 +869,13 @@ export default function App() {
                 </p>
               </div>
 
-              {(!result.degradationImpurities || result.degradationImpurities.length === 0) ? (
+              {topImpurities.length === 0 ? (
                 <div className="p-8 text-center bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl text-sm text-[#64748B]">
                   No significant byproducts detected under standard conditions.
                 </div>
               ) : (
-                [...result.degradationImpurities]
-                  .sort((a, b) => (b.probability || 0) - (a.probability || 0))
-                  .slice(0, 5)
-                  .map((imp, idx) => {
+                <div className="flex flex-col gap-4">
+                  {topImpurities.map((imp, idx) => {
                     const prob = (imp.probability || 0) * 100;
                     const cond = imp.condition || "Direct Degradation";
                     let condClass = "cond-hydro";
@@ -830,7 +886,7 @@ export default function App() {
                     else if (condLower.includes("react") || condLower.includes("incomp")) condClass = "cond-react";
 
                     return (
-                      <div key={`prod-${idx}`} className="ap1-imp-card flex-col sm:flex-row">
+                      <div key={`prod-${idx}`} className="ap1-imp-card flex-col sm:flex-row w-full">
                         <div className="ap1-imp-svg">
                           <div className="absolute top-3 left-3 bg-[#F1F5F9] text-[#475569] text-xs font-extrabold px-2 py-0.5 rounded">
                             #{idx + 1}
@@ -897,16 +953,20 @@ export default function App() {
                         </div>
                       </div>
                     );
-                  })
+                  })}
+                </div>
               )}
-            </div>
+            </section>
 
-            {/* 4. At Last: Disclaimer */}
-            <div className="border border-[#E2E8F0] rounded-xl bg-[#FAFAFA] p-4 text-xs text-[#64748B] leading-relaxed mt-6">
-              Disclaimer: INTERACTION is an AI-assisted computational chemistry modeling tool designed for reaction pathway exploration and byproduct screening. Predictions should be verified by experimental analytical assays (HPLC, LC-MS, NMR).
+            {/* 5. Disclaimer Card */}
+            <div className="border border-[#E2E8F0] rounded-xl bg-[#FAFAFA] p-4 text-xs text-[#64748B] leading-relaxed">
+              <p className="italic m-0">
+                Disclaimer: INTERACTION is an AI-assisted computational chemistry modeling tool designed for reaction pathway exploration and byproduct screening. Predictions should be verified by experimental analytical assays (HPLC, LC-MS, NMR).
+              </p>
             </div>
           </div>
-        )}
+          );
+        })()}
       </main>
 
       {/* Footer Matching Streamlit */}

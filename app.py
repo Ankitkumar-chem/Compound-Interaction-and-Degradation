@@ -509,6 +509,13 @@ PRESET_COMPOUNDS: Dict[str, Dict[str, Any]] = {
 # ==============================================================================
 # 3. Chemical Vector SVG Generator & Descriptors
 # ==============================================================================
+def st_clean_html(html_str: str):
+    """Strips all leading and trailing whitespace from each line and discards blank lines.
+    This guarantees CommonMark/Streamlit will NEVER treat lines as 4-space indented code blocks."""
+    cleaned = "\n".join(line.strip() for line in html_str.splitlines() if line.strip())
+    st.markdown(cleaned, unsafe_allow_html=True)
+
+
 def svg_to_data_uri(svg_str: str) -> str:
     """Encodes SVG string to a base64 data URI for 100% reliable rendering in Streamlit markdown."""
     if not svg_str:
@@ -1524,6 +1531,41 @@ elif st.session_state.view == "results" and st.session_state.result:
 
     st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
 
+    # Executive Summary
+    st.markdown("""
+    <div style="margin: 0.5rem 0 1.25rem 0;">
+        <h3 style="font-family: 'Playfair Display', serif; font-size: 1.35rem; font-weight: 700; color: #0F172A; margin-bottom: 0.25rem;">
+            Executive Summary
+        </h3>
+        <p style="font-size: 0.85rem; color: #64748B; margin: 0;">
+            Calculated key thermodynamic and kinetic performance indicators for the reaction system.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    impurities = sorted(res.get("degradationImpurities", []), key=lambda x: x.get("probability", 0), reverse=True)[:5]
+    max_prob = max([i.get("probability", 0) for i in impurities]) if impurities else 0
+    energies = [i.get("relativeEnergy") for i in impurities if i.get("relativeEnergy") is not None]
+    min_energy = min(energies) if energies else None
+
+    # Summary Metrics Ribbon Cards
+    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+    with mcol1:
+        with st.container(border=True):
+            st.markdown('<div style="font-size: 0.68rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em;">Reaction Products</div><div style="font-size: 1.5rem; font-weight: 800; color: #0F172A;">' + str(len(impurities)) + '</div><div style="font-size: 0.65rem; color: #94A3B8;">Total identified products</div>', unsafe_allow_html=True)
+    with mcol2:
+        with st.container(border=True):
+            st.markdown(f'<div style="font-size: 0.68rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em;">Highest Probability</div><div style="font-size: 1.5rem; font-weight: 800; color: #4F46E5;">{max_prob * 100:.1f}%</div><div style="font-size: 0.65rem; color: #94A3B8;">Maximum formation likelihood</div>', unsafe_allow_html=True)
+    with mcol3:
+        with st.container(border=True):
+            st.markdown(f'<div style="font-size: 0.68rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em;">Interaction Nature</div><div style="font-size: 1.5rem; font-weight: 800; color: #0F172A;">{res.get("interactionType", "Chemical")}</div><div style="font-size: 0.65rem; color: #94A3B8;">Dominant classification</div>', unsafe_allow_html=True)
+    with mcol4:
+        with st.container(border=True):
+            min_e_str = f"{min_energy:.2f} kcal/mol" if min_energy is not None else "Calculated"
+            st.markdown(f'<div style="font-size: 0.68rem; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em;">Lowest ΔG (Driving Force)</div><div style="font-size: 1.5rem; font-weight: 800; color: #0F172A; font-family: monospace;">{min_e_str}</div><div style="font-size: 0.65rem; color: #94A3B8;">Most exergonic pathway</div>', unsafe_allow_html=True)
+
+    st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+
     # 1. Top Part: Input Chemical Data
     st.markdown("""
     <div style="margin: 0.5rem 0 1.25rem 0;">
@@ -1548,6 +1590,17 @@ elif st.session_state.view == "results" and st.session_state.result:
         features_pills = "".join([f'<span class="ap1-pill">{f}</span>' for f in comp.get("features", [])])
         sites_pills = "".join([f'<span class="ap1-pill site">{s}</span>' for s in comp.get("interactionSites", [])])
 
+        sites_html = ""
+        if sites_pills:
+            sites_html = f"""
+            <div style="margin-top: 0.85rem;">
+                <div style="font-size: 0.72rem; font-weight: 700; color: #4F46E5; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">
+                    Reactive Interaction Centers:
+                </div>
+                <div class="ap1-tag-group">{sites_pills}</div>
+            </div>
+            """
+
         comp_html = f"""
         <div class="ap1-comp-card">
             <div class="ap1-comp-mol">
@@ -1564,18 +1617,11 @@ elif st.session_state.view == "results" and st.session_state.result:
                     <span class="ap1-pill mw">{mw_str}</span>
                     {features_pills}
                 </div>
-                {f'''
-                <div style="margin-top: 0.85rem;">
-                    <div style="font-size: 0.72rem; font-weight: 700; color: #4F46E5; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">
-                        Reactive Interaction Centers:
-                    </div>
-                    <div class="ap1-tag-group">{sites_pills}</div>
-                </div>
-                ''' if sites_pills else ''}
+                {sites_html}
             </div>
         </div>
         """
-        st.markdown(comp_html, unsafe_allow_html=True)
+        st_clean_html(comp_html)
 
     st.markdown("<div style='height: 2rem;'></div>", unsafe_allow_html=True)
 
@@ -1680,22 +1726,18 @@ elif st.session_state.view == "results" and st.session_state.result:
                             {dG_html}
                         </div>
                     </div>
-
                     <div class="ap1-prob-bar-bg">
                         <div class="ap1-prob-bar-fill" style="width: {min(max(prob, 5.0), 100.0):.1f}%;"></div>
                     </div>
-
                     <div class="ap1-imp-desc">
                         {imp.get('structureDescription', '')}
                     </div>
-
                     <div class="ap1-mech-box">
                         <div class="ap1-mech-title">
                             <span>Chemical Mechanism:</span>
                         </div>
                         <div>{imp.get('mechanismExplanation', '')}</div>
                     </div>
-
                     <div style="display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;">
                         <span class="ap1-badge-cond {cond_class}">{cond}</span>
                         <span class="ap1-pill" style="font-weight: 600; color: #4338CA; background: #EEF2FF; border-color: #E0E7FF;">Origin: {imp.get('origin', 'Parent Molecule')}</span>
@@ -1704,7 +1746,7 @@ elif st.session_state.view == "results" and st.session_state.result:
                 </div>
             </div>
             """
-            st.markdown(card_html, unsafe_allow_html=True)
+            st_clean_html(card_html)
 
     # 4. At Last: Disclaimer
     st.markdown("""

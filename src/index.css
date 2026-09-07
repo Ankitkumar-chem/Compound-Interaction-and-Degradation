@@ -151,7 +151,8 @@
     overflow: hidden;
     display: flex;
     flex-direction: row;
-    margin-bottom: 1.25rem;
+    margin-bottom: 0;
+    width: 100%;
     box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     transition: all 0.15s ease;
 }
@@ -263,7 +264,8 @@
     overflow: hidden;
     display: flex;
     flex-direction: row;
-    margin-bottom: 1.5rem;
+    margin-bottom: 0;
+    width: 100%;
     box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -365,3 +367,12 @@
 .cond-therm { background: #FFEDD5; color: #C2410C; }
 .cond-photo { background: #E0E7FF; color: #3730A3; }
 .cond-react { background: #F3E8FF; color: #6B21A8; }
+
+@media (max-width: 640px) {
+    .ap1-comp-mol, .ap1-imp-svg {
+        width: 100% !important;
+        min-width: 100% !important;
+        border-right: none !important;
+        border-bottom: 1px solid #F1F5F9 !important;
+    }
+}
