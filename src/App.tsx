@@ -11,7 +11,6 @@ import {
   CheckCircle2, 
   ShieldAlert,
   RefreshCw,
-  Download,
   Info,
   Database,
   History,
@@ -136,7 +135,6 @@ export default function App() {
   };
 
   const [predictionMethod, setPredictionMethod] = useState<PredictionMethod>("Both");
-  const [activeTab, setActiveTab] = useState<"products" | "reactants" | "reasoning">("products");
 
   const addCompound = () => {
     if (compounds.length < 5) {
@@ -702,288 +700,208 @@ export default function App() {
         {view === 'results' && result && !loading && (
           <div className="w-full space-y-6">
             {/* Action Toolbar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
               <button
                 onClick={() => { setView('input'); setResult(null); }}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-[#CBD5E1] text-[#334155] hover:bg-[#F8FAFC] font-semibold text-sm rounded-lg transition-colors shadow-xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#CBD5E1] text-[#334155] hover:bg-[#F8FAFC] font-medium text-xs rounded-lg transition-colors shadow-xs"
               >
                 ← Back to Reaction Setup
               </button>
               <button
                 onClick={downloadExcel}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-[#0F172A] hover:bg-[#1E293B] text-white font-semibold text-sm rounded-lg transition-colors shadow-sm"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#CBD5E1] hover:border-[#94A3B8] text-[#334155] hover:text-[#0F172A] hover:bg-[#F8FAFC] font-medium text-xs rounded-lg transition-colors shadow-xs"
               >
-                <Download className="w-4 h-4" />
-                Download Excel Interaction Report
+                Download Excel Report
               </button>
             </div>
 
-            {/* Executive Summary Metrics */}
-            {(() => {
-              const impurities = result.degradationImpurities || [];
-              const maxProb = impurities.length > 0 ? Math.max(...impurities.map(i => i.probability || 0)) : 0;
-              const energies = impurities.map(i => i.relativeEnergy).filter((e): e is number => e != null);
-              const minEnergy = energies.length > 0 ? Math.min(...energies) : null;
+            {/* 1. Top Part: Input Chemical Data */}
+            <div className="space-y-4 pt-2">
+              <div>
+                <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
+                  Input Chemical Data
+                </h3>
+                <p className="text-xs sm:text-sm text-[#64748B]">
+                  Calculated molecular descriptors, functional group features, and predicted reactive interaction sites.
+                </p>
+              </div>
 
-              return (
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4">
-                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Reaction Products</div>
-                    <div className="text-2xl font-extrabold text-[#0F172A]">{impurities.length}</div>
-                    <div className="text-[10px] text-[#94A3B8] mt-1">Total identified transformation products</div>
-                  </div>
-                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4">
-                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Highest Probability</div>
-                    <div className="text-2xl font-extrabold text-[#4F46E5]">{(maxProb * 100).toFixed(1)}%</div>
-                    <div className="text-[10px] text-[#94A3B8] mt-1">Maximum formation likelihood</div>
-                  </div>
-                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4">
-                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Interaction Nature</div>
-                    <div className="text-2xl font-extrabold text-[#0F172A]">{result.interactionType || "Chemical"}</div>
-                    <div className="text-[10px] text-[#94A3B8] mt-1">Dominant interaction classification</div>
-                  </div>
-                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4">
-                    <div className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-1">Lowest ΔG (Driving Force)</div>
-                    <div className="text-2xl font-extrabold text-[#0F172A] font-mono">
-                      {minEnergy !== null ? `${minEnergy.toFixed(2)} kcal/mol` : "Calculated"}
+              {(result.compounds || []).map((comp, idx) => {
+                const mw = comp.molecularDescriptors?.MolWt;
+                const role = idx === 0 ? "Primary Compound" : `Secondary Compound ${idx}`;
+                const roleClass = idx === 0 ? "role-primary" : "role-secondary";
+
+                return (
+                  <div key={`comp-card-${idx}`} className="ap1-comp-card flex-col sm:flex-row">
+                    <div className="ap1-comp-mol">
+                      <span className="ap1-comp-badge">C{idx + 1}</span>
+                      {comp.smiles ? (
+                        <ChemicalStructure smiles={comp.smiles} width={180} height={180} />
+                      ) : (
+                        <div className="w-36 h-36 bg-slate-100 rounded-lg animate-pulse" />
+                      )}
                     </div>
-                    <div className="text-[10px] text-[#94A3B8] mt-1">Most exergonic thermodynamic pathway</div>
+                    <div className="ap1-comp-info">
+                      <div className="flex items-center mb-1">
+                        <span className="ap1-comp-name">{comp.name || "Compound"}</span>
+                        <span className={`ap1-comp-role ${roleClass}`}>{role}</span>
+                      </div>
+                      {comp.smiles && (
+                        <div className="ap1-smiles-box" title={comp.smiles}>
+                          {comp.smiles}
+                        </div>
+                      )}
+                      <div className="ap1-tag-group">
+                        {mw && <span className="ap1-pill mw">MW: {mw.toFixed(2)} g/mol</span>}
+                        {(comp.features || []).map((f, fi) => (
+                          <span key={fi} className="ap1-pill">{f}</span>
+                        ))}
+                      </div>
+                      {comp.interactionSites && comp.interactionSites.length > 0 && (
+                        <div className="mt-3">
+                          <div className="text-[11px] font-bold text-[#4F46E5] uppercase tracking-wider mb-1">
+                            Reactive Interaction Centers:
+                          </div>
+                          <div className="ap1-tag-group">
+                            {comp.interactionSites.map((site, si) => (
+                              <span key={si} className="ap1-pill site">{site}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })()}
-
-            {/* Tabbed Analytical Views Matching Streamlit */}
-            <div className="border-b border-[#E2E8F0] flex gap-2 pt-2">
-              <button
-                onClick={() => setActiveTab("products")}
-                className={`px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-1.5 ${
-                  activeTab === "products"
-                    ? "bg-[#EEF2FF] text-[#4F46E5] border-b-2 border-[#4F46E5]"
-                    : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
-                }`}
-              >
-                Top 5 Reaction Products
-              </button>
-              <button
-                onClick={() => setActiveTab("reactants")}
-                className={`px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-1.5 ${
-                  activeTab === "reactants"
-                    ? "bg-[#EEF2FF] text-[#4F46E5] border-b-2 border-[#4F46E5]"
-                    : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
-                }`}
-              >
-                Reactants & Components
-              </button>
-              <button
-                onClick={() => setActiveTab("reasoning")}
-                className={`px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-1.5 ${
-                  activeTab === "reasoning"
-                    ? "bg-[#EEF2FF] text-[#4F46E5] border-b-2 border-[#4F46E5]"
-                    : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
-                }`}
-              >
-                Mechanistic Framework
-              </button>
+                );
+              })}
             </div>
 
-            {/* Tab 1: Predicted Products */}
-            {activeTab === "products" && (
-              <div className="space-y-4">
-                <div className="my-2">
-                  <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
-                    Top 5 Predicted Reaction Byproducts & Degradation Products
-                  </h3>
-                  <p className="text-xs sm:text-sm text-[#64748B]">
-                    Ranked strictly by formation probability and thermodynamic stability (Top 5 maximum).
-                  </p>
+            {/* 2. Mechanistic Framework Evaluation */}
+            <div className="space-y-4 pt-4 border-t border-[#E2E8F0]">
+              <div>
+                <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
+                  Mechanistic Framework Evaluation
+                </h3>
+                <p className="text-xs sm:text-sm text-[#64748B]">
+                  Comprehensive kinetic pathways, microenvironmental influences, and thermodynamic justification.
+                </p>
+              </div>
+
+              <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 sm:p-7 shadow-[0_1px_3px_rgba(15,23,42,0.03)]">
+                <div className="text-sm text-[#334155] leading-relaxed whitespace-pre-wrap font-sans">
+                  {result.chainOfThought || "No detailed reasoning chain provided."}
                 </div>
+              </div>
 
-                {(!result.degradationImpurities || result.degradationImpurities.length === 0) ? (
-                  <div className="p-8 text-center bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl text-sm text-[#64748B]">
-                    No significant byproducts detected under standard conditions.
-                  </div>
-                ) : (
-                  [...result.degradationImpurities]
-                    .sort((a, b) => (b.probability || 0) - (a.probability || 0))
-                    .slice(0, 5)
-                    .map((imp, idx) => {
-                      const prob = (imp.probability || 0) * 100;
-                      const cond = imp.condition || "Direct Degradation";
-                      let condClass = "cond-hydro";
-                      const condLower = cond.toLowerCase();
-                      if (condLower.includes("oxid")) condClass = "cond-oxid";
-                      else if (condLower.includes("therm")) condClass = "cond-therm";
-                      else if (condLower.includes("photo")) condClass = "cond-photo";
-                      else if (condLower.includes("react") || condLower.includes("incomp")) condClass = "cond-react";
+              <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl p-5 text-xs text-[#475569] leading-relaxed">
+                <strong className="text-[#0F172A] block mb-1 text-sm font-semibold">
+                  Chemical Reaction & Byproduct Analysis:
+                </strong>
+                Products identified with high formation probability or favorable exergonic free energy (ΔG &lt; 0 kcal/mol) represent dominant reaction pathways. In experimental validation, these byproducts should be verified using analytical separation techniques (HPLC, LC-MS, GC-MS, or NMR).
+              </div>
+            </div>
 
-                      return (
-                        <div key={`prod-${idx}`} className="ap1-imp-card flex-col sm:flex-row">
-                          <div className="ap1-imp-svg">
-                            <div className="absolute top-3 left-3 bg-[#F1F5F9] text-[#475569] text-xs font-extrabold px-2 py-0.5 rounded">
-                              #{idx + 1}
-                            </div>
-                            {imp.smiles ? (
-                              <ChemicalStructure smiles={imp.smiles} width={220} height={220} />
-                            ) : (
-                              <div className="w-40 h-40 bg-slate-100 rounded-lg animate-pulse" />
-                            )}
+            {/* 3. Degradation Products and Details (Top 5) */}
+            <div className="space-y-4 pt-4 border-t border-[#E2E8F0]">
+              <div>
+                <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
+                  Degradation Products and Details
+                </h3>
+                <p className="text-xs sm:text-sm text-[#64748B]">
+                  Ranked strictly by formation probability and thermodynamic stability (Top 5 maximum).
+                </p>
+              </div>
+
+              {(!result.degradationImpurities || result.degradationImpurities.length === 0) ? (
+                <div className="p-8 text-center bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl text-sm text-[#64748B]">
+                  No significant byproducts detected under standard conditions.
+                </div>
+              ) : (
+                [...result.degradationImpurities]
+                  .sort((a, b) => (b.probability || 0) - (a.probability || 0))
+                  .slice(0, 5)
+                  .map((imp, idx) => {
+                    const prob = (imp.probability || 0) * 100;
+                    const cond = imp.condition || "Direct Degradation";
+                    let condClass = "cond-hydro";
+                    const condLower = cond.toLowerCase();
+                    if (condLower.includes("oxid")) condClass = "cond-oxid";
+                    else if (condLower.includes("therm")) condClass = "cond-therm";
+                    else if (condLower.includes("photo")) condClass = "cond-photo";
+                    else if (condLower.includes("react") || condLower.includes("incomp")) condClass = "cond-react";
+
+                    return (
+                      <div key={`prod-${idx}`} className="ap1-imp-card flex-col sm:flex-row">
+                        <div className="ap1-imp-svg">
+                          <div className="absolute top-3 left-3 bg-[#F1F5F9] text-[#475569] text-xs font-extrabold px-2 py-0.5 rounded">
+                            #{idx + 1}
                           </div>
-                          <div className="ap1-imp-body">
-                            <div className="ap1-imp-header">
-                              <div>
-                                <div className="ap1-imp-title">{imp.iupacName || "Product"}</div>
-                                <div className="mt-1.5 flex gap-2">
-                                  {imp.molecularDescriptors?.MolWt && (
-                                    <span className="ap1-pill mw">MW: {imp.molecularDescriptors.MolWt.toFixed(2)} g/mol</span>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <div className="ap1-imp-prob-val">{prob.toFixed(1)}%</div>
-                                {imp.probabilityHeuristic != null && imp.probabilityBoltzmann != null && (
-                                  <div className="ap1-imp-prob-sub">
-                                    Heuristic: {(imp.probabilityHeuristic * 100).toFixed(1)}% | Boltzmann: {(imp.probabilityBoltzmann * 100).toFixed(1)}%
-                                  </div>
-                                )}
-                                {imp.relativeEnergy != null && (
-                                  <div className="text-xs font-mono text-[#64748B] text-right mt-1">
-                                    ΔG: {imp.relativeEnergy.toFixed(2)} kcal/mol
-                                  </div>
+                          {imp.smiles ? (
+                            <ChemicalStructure smiles={imp.smiles} width={220} height={220} />
+                          ) : (
+                            <div className="w-40 h-40 bg-slate-100 rounded-lg animate-pulse" />
+                          )}
+                        </div>
+                        <div className="ap1-imp-body">
+                          <div className="ap1-imp-header">
+                            <div>
+                              <div className="ap1-imp-title">{imp.iupacName || "Product"}</div>
+                              <div className="mt-1.5 flex gap-2">
+                                {imp.molecularDescriptors?.MolWt && (
+                                  <span className="ap1-pill mw">MW: {imp.molecularDescriptors.MolWt.toFixed(2)} g/mol</span>
                                 )}
                               </div>
                             </div>
-
-                            <div className="ap1-prob-bar-bg">
-                              <div className="ap1-prob-bar-fill" style={{ width: `${Math.min(Math.max(prob, 5), 100)}%` }}></div>
-                            </div>
-
-                            {imp.structureDescription && (
-                              <div className="ap1-imp-desc">{imp.structureDescription}</div>
-                            )}
-
-                            {imp.mechanismExplanation && (
-                              <div className="ap1-mech-box">
-                                <div className="ap1-mech-title">
-                                  <span>Chemical Mechanism:</span>
+                            <div className="text-right">
+                              <div className="ap1-imp-prob-val">{prob.toFixed(1)}%</div>
+                              {imp.probabilityHeuristic != null && imp.probabilityBoltzmann != null && (
+                                <div className="ap1-imp-prob-sub">
+                                  Heuristic: {(imp.probabilityHeuristic * 100).toFixed(1)}% | Boltzmann: {(imp.probabilityBoltzmann * 100).toFixed(1)}%
                                 </div>
-                                <div>{imp.mechanismExplanation}</div>
-                              </div>
-                            )}
-
-                            <div className="flex flex-wrap gap-2 items-center">
-                              <span className={`ap1-badge-cond ${condClass}`}>{cond}</span>
-                              <span className="ap1-pill font-semibold text-[#4338CA] bg-[#EEF2FF] border-[#E0E7FF]">
-                                Origin: {imp.origin || "Parent Molecule"}
-                              </span>
-                              {imp.smiles && (
-                                <span className="ap1-pill font-mono text-[11px] text-[#64748B] truncate max-w-xs" title={imp.smiles}>
-                                  {imp.smiles}
-                                </span>
+                              )}
+                              {imp.relativeEnergy != null && (
+                                <div className="text-xs font-mono text-[#64748B] text-right mt-1">
+                                  ΔG: {imp.relativeEnergy.toFixed(2)} kcal/mol
+                                </div>
                               )}
                             </div>
                           </div>
-                        </div>
-                      );
-                    })
-                )}
-              </div>
-            )}
 
-            {/* Tab 2: Reactants & Components */}
-            {activeTab === "reactants" && (
-              <div className="space-y-4">
-                <div className="my-2">
-                  <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
-                    Input Molecular Profiles
-                  </h3>
-                  <p className="text-xs sm:text-sm text-[#64748B]">
-                    Calculated molecular descriptors, functional group features, and predicted reactive interaction sites.
-                  </p>
-                </div>
-
-                {(result.compounds || []).map((comp, idx) => {
-                  const mw = comp.molecularDescriptors?.MolWt;
-                  const role = idx === 0 ? "Primary Compound" : `Secondary Compound ${idx}`;
-                  const roleClass = idx === 0 ? "role-primary" : "role-secondary";
-
-                  return (
-                    <div key={`comp-card-${idx}`} className="ap1-comp-card flex-col sm:flex-row">
-                      <div className="ap1-comp-mol">
-                        <span className="ap1-comp-badge">C{idx + 1}</span>
-                        {comp.smiles ? (
-                          <ChemicalStructure smiles={comp.smiles} width={180} height={180} />
-                        ) : (
-                          <div className="w-36 h-36 bg-slate-100 rounded-lg animate-pulse" />
-                        )}
-                      </div>
-                      <div className="ap1-comp-info">
-                        <div className="flex items-center mb-1">
-                          <span className="ap1-comp-name">{comp.name || "Compound"}</span>
-                          <span className={`ap1-comp-role ${roleClass}`}>{role}</span>
-                        </div>
-                        {comp.smiles && (
-                          <div className="ap1-smiles-box" title={comp.smiles}>
-                            {comp.smiles}
+                          <div className="ap1-prob-bar-bg">
+                            <div className="ap1-prob-bar-fill" style={{ width: `${Math.min(Math.max(prob, 5), 100)}%` }}></div>
                           </div>
-                        )}
-                        <div className="ap1-tag-group">
-                          {mw && <span className="ap1-pill mw">MW: {mw.toFixed(2)} g/mol</span>}
-                          {(comp.features || []).map((f, fi) => (
-                            <span key={fi} className="ap1-pill">{f}</span>
-                          ))}
-                        </div>
-                        {comp.interactionSites && comp.interactionSites.length > 0 && (
-                          <div className="mt-3">
-                            <div className="text-[11px] font-bold text-[#4F46E5] uppercase tracking-wider mb-1">
-                              Reactive Interaction Centers:
+
+                          {imp.structureDescription && (
+                            <div className="ap1-imp-desc">{imp.structureDescription}</div>
+                          )}
+
+                          {imp.mechanismExplanation && (
+                            <div className="ap1-mech-box">
+                              <div className="ap1-mech-title">
+                                <span>Chemical Mechanism:</span>
+                              </div>
+                              <div>{imp.mechanismExplanation}</div>
                             </div>
-                            <div className="ap1-tag-group">
-                              {comp.interactionSites.map((site, si) => (
-                                <span key={si} className="ap1-pill site">{site}</span>
-                              ))}
-                            </div>
+                          )}
+
+                          <div className="flex flex-wrap gap-2 items-center">
+                            <span className={`ap1-badge-cond ${condClass}`}>{cond}</span>
+                            <span className="ap1-pill font-semibold text-[#4338CA] bg-[#EEF2FF] border-[#E0E7FF]">
+                              Origin: {imp.origin || "Parent Molecule"}
+                            </span>
+                            {imp.smiles && (
+                              <span className="ap1-pill font-mono text-[11px] text-[#64748B] truncate max-w-xs" title={imp.smiles}>
+                                {imp.smiles}
+                              </span>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })
+              )}
+            </div>
 
-            {/* Tab 3: AI Reasoning Framework */}
-            {activeTab === "reasoning" && (
-              <div className="space-y-4">
-                <div className="my-2">
-                  <h3 className="font-serif text-xl font-bold text-[#0F172A] mb-1">
-                    AI Mechanistic Reasoning Framework
-                  </h3>
-                  <p className="text-xs sm:text-sm text-[#64748B]">
-                    Comprehensive kinetic pathways, microenvironmental influences, and thermodynamic justification.
-                  </p>
-                </div>
-
-                <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 sm:p-7 shadow-[0_1px_3px_rgba(15,23,42,0.03)]">
-                  <div className="text-sm text-[#334155] leading-relaxed whitespace-pre-wrap font-sans">
-                    {result.chainOfThought || "No detailed reasoning chain provided."}
-                  </div>
-                </div>
-
-                <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl p-5 text-xs text-[#475569] leading-relaxed">
-                  <strong className="text-[#0F172A] block mb-1 text-sm font-semibold">
-                    Analytical Guidance & Mechanistic Considerations:
-                  </strong>
-                  <ul className="list-disc pl-5 space-y-1 mt-1 text-[#475569]">
-                    <li>Thermodynamic equilibria (Boltzmann distribution) assume standard state conditions at 298.15K.</li>
-                    <li>Kinetic barrier overrides may favor lower activation energy pathways over thermodynamically deep energy wells.</li>
-                    <li>Secondary excipient microenvironmental changes (e.g. moisture sorption, basic surface catalysis) heavily modulate reaction rates.</li>
-                  </ul>
-                </div>
-              </div>
-            )}
-
-            {/* Disclaimer Matching Streamlit */}
+            {/* 4. At Last: Disclaimer */}
             <div className="border border-[#E2E8F0] rounded-xl bg-[#FAFAFA] p-4 text-xs text-[#64748B] leading-relaxed mt-6">
               Disclaimer: INTERACTION is an AI-assisted computational chemistry modeling tool designed for reaction pathway exploration and byproduct screening. Predictions should be verified by experimental analytical assays (HPLC, LC-MS, NMR).
             </div>

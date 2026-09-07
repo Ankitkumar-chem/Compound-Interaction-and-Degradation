@@ -1522,231 +1522,191 @@ elif st.session_state.view == "results" and st.session_state.result:
             use_container_width=True,
         )
 
-    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
-
-    # Executive Summary Metrics (Top 5 Products)
-    impurities = res.get("degradationImpurities", [])
-    sorted_impurities = sorted(impurities, key=lambda x: x.get("probability", 0), reverse=True)[:5]
-    max_prob = max([imp.get("probability", 0) for imp in sorted_impurities], default=0.0)
-    min_dG = min([imp.get("relativeEnergy", 0) for imp in sorted_impurities if imp.get("relativeEnergy") is not None], default=None)
-
-    m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-    with m_col1:
-        st.metric(
-            label="Top Products",
-            value=f"{len(sorted_impurities)} / 5",
-            help="Top 5 predicted transformation and interaction products identified.",
-        )
-    with m_col2:
-        st.metric(
-            label="Highest Likelihood",
-            value=f"{max_prob * 100:.1f}%",
-            help="Maximum formation likelihood among the identified top products.",
-        )
-    with m_col3:
-        st.metric(
-            label="Interaction Nature",
-            value=res.get("interactionType", "Chemical"),
-            help="Dominant chemical interaction classification.",
-        )
-    with m_col4:
-        dG_label = f"{min_dG:.2f} kcal/mol" if min_dG is not None else "Calculated"
-        st.metric(
-            label="Lowest ΔG (Driving Force)",
-            value=dG_label,
-            help="Most exergonic thermodynamic pathway driving product formation.",
-        )
-
     st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
 
-    # Tabbed Analytical Views
-    tab_overview, tab_impurities, tab_reasoning = st.tabs([
-        "Top 5 Reaction Products",
-        "Reactants & Components",
-        "Mechanistic Framework",
-    ])
+    # 1. Top Part: Input Chemical Data
+    st.markdown("""
+    <div style="margin: 0.5rem 0 1.25rem 0;">
+        <h3 style="font-family: 'Playfair Display', serif; font-size: 1.35rem; font-weight: 700; color: #0F172A; margin-bottom: 0.25rem;">
+            Input Chemical Data
+        </h3>
+        <p style="font-size: 0.85rem; color: #64748B; margin: 0;">
+            Calculated molecular descriptors, functional group features, and predicted reactive interaction sites.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Tab 1: Predicted Products
-    with tab_overview:
-        st.markdown("""
-        <div style="margin: 1rem 0 1.25rem 0;">
-            <h3 style="font-family: 'Playfair Display', serif; font-size: 1.35rem; font-weight: 700; color: #0F172A; margin-bottom: 0.25rem;">
-                Top 5 Predicted Reaction Byproducts & Degradation Products
-            </h3>
-            <p style="font-size: 0.85rem; color: #64748B; margin: 0;">
-                Ranked strictly by formation probability and thermodynamic stability (Top 5 maximum).
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+    for idx, comp in enumerate(res.get("compounds", [])):
+        smi = comp.get("smiles", "")
+        svg_raw = get_mol_svg(smi, width=220, height=220)
+        svg_uri = svg_to_data_uri(svg_raw)
+        mw = comp.get("molecularDescriptors", {}).get("MolWt")
+        mw_str = f"MW: {mw:.2f} g/mol" if mw else "MW: N/A"
+        role = "Primary Compound" if idx == 0 else f"Secondary Compound {idx}"
+        role_class = "role-primary" if idx == 0 else "role-secondary"
 
-        if not sorted_impurities:
-            st.info("No significant byproducts detected under standard conditions.")
-        else:
-            for idx, imp in enumerate(sorted_impurities):
-                smi = imp.get("smiles", "")
-                svg_raw = get_mol_svg(smi, width=250, height=250)
-                svg_uri = svg_to_data_uri(svg_raw)
-                mw = imp.get("molecularDescriptors", {}).get("MolWt")
-                mw_badge = f'<span class="ap1-pill mw">MW: {mw:.2f} g/mol</span>' if mw else ""
+        features_pills = "".join([f'<span class="ap1-pill">{f}</span>' for f in comp.get("features", [])])
+        sites_pills = "".join([f'<span class="ap1-pill site">{s}</span>' for s in comp.get("interactionSites", [])])
 
-                prob = imp.get("probability", 0) * 100
-                h_prob = imp.get("probabilityHeuristic")
-                b_prob = imp.get("probabilityBoltzmann")
-                hb_sub = ""
-                if h_prob is not None and b_prob is not None:
-                    hb_sub = f'<div class="ap1-imp-prob-sub">Heuristic: {h_prob*100:.1f}% | Boltzmann: {b_prob*100:.1f}%</div>'
-
-                dG = imp.get("relativeEnergy")
-                dG_html = f'<div style="font-size: 0.72rem; font-family: monospace; color: #64748B; text-align: right; margin-top: 0.15rem;">ΔG: {dG:.2f} kcal/mol</div>' if dG is not None else ""
-
-                cond = imp.get("condition", "Direct Degradation")
-                cond_class = "cond-hydro"
-                if "oxid" in cond.lower():
-                    cond_class = "cond-oxid"
-                elif "therm" in cond.lower():
-                    cond_class = "cond-therm"
-                elif "photo" in cond.lower():
-                    cond_class = "cond-photo"
-                elif "react" in cond.lower() or "incomp" in cond.lower():
-                    cond_class = "cond-react"
-
-                # Render entire card in ONE single unbroken HTML block
-                card_html = f"""
-                <div class="ap1-imp-card">
-                    <div class="ap1-imp-svg">
-                        <div style="position: absolute; top: 12px; left: 12px; background: #F1F5F9; color: #475569; font-size: 0.7rem; font-weight: 800; padding: 0.2rem 0.6rem; border-radius: 4px; z-index: 2;">
-                            #{idx + 1}
-                        </div>
-                        <img src="{svg_uri}" style="width: 100%; height: 100%; object-fit: contain;" />
-                    </div>
-                    <div class="ap1-imp-body">
-                        <div class="ap1-imp-header">
-                            <div>
-                                <div class="ap1-imp-title">{imp.get('iupacName', 'Product')}</div>
-                                <div style="margin-top: 0.35rem;">
-                                    {mw_badge}
-                                </div>
-                            </div>
-                            <div>
-                                <div class="ap1-imp-prob-val">{prob:.1f}%</div>
-                                {hb_sub}
-                                {dG_html}
-                            </div>
-                        </div>
-
-                        <div class="ap1-prob-bar-bg">
-                            <div class="ap1-prob-bar-fill" style="width: {min(max(prob, 5.0), 100.0):.1f}%;"></div>
-                        </div>
-
-                        <div class="ap1-imp-desc">
-                            {imp.get('structureDescription', '')}
-                        </div>
-
-                        <div class="ap1-mech-box">
-                            <div class="ap1-mech-title">
-                                <span>Chemical Mechanism:</span>
-                            </div>
-                            <div>{imp.get('mechanismExplanation', '')}</div>
-                        </div>
-
-                        <div style="display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;">
-                            <span class="ap1-badge-cond {cond_class}">{cond}</span>
-                            <span class="ap1-pill" style="font-weight: 600; color: #4338CA; background: #EEF2FF; border-color: #E0E7FF;">Origin: {imp.get('origin', 'Parent Molecule')}</span>
-                            <span class="ap1-pill" style="font-family: monospace; font-size: 0.65rem; color: #64748B;">{smi}</span>
-                        </div>
-                    </div>
+        comp_html = f"""
+        <div class="ap1-comp-card">
+            <div class="ap1-comp-mol">
+                <span class="ap1-comp-badge">C{idx + 1}</span>
+                <img src="{svg_uri}" style="width: 100%; height: 100%; object-fit: contain;" />
+            </div>
+            <div class="ap1-comp-info">
+                <div style="display: flex; align-items: center; margin-bottom: 0.25rem;">
+                    <span class="ap1-comp-name">{comp.get('name', 'Compound')}</span>
+                    <span class="ap1-comp-role {role_class}">{role}</span>
                 </div>
-                """
-                st.markdown(card_html, unsafe_allow_html=True)
+                <div class="ap1-smiles-box" title="{smi}">{smi}</div>
+                <div class="ap1-tag-group">
+                    <span class="ap1-pill mw">{mw_str}</span>
+                    {features_pills}
+                </div>
+                {f'''
+                <div style="margin-top: 0.85rem;">
+                    <div style="font-size: 0.72rem; font-weight: 700; color: #4F46E5; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">
+                        Reactive Interaction Centers:
+                    </div>
+                    <div class="ap1-tag-group">{sites_pills}</div>
+                </div>
+                ''' if sites_pills else ''}
+            </div>
+        </div>
+        """
+        st.markdown(comp_html, unsafe_allow_html=True)
 
-    # Tab 2: Reactants & Components
-    with tab_impurities:
-        st.markdown("""
-        <div style="margin: 1rem 0 1.25rem 0;">
-            <h3 style="font-family: 'Playfair Display', serif; font-size: 1.35rem; font-weight: 700; color: #0F172A; margin-bottom: 0.25rem;">
-                Input Molecular Profiles
-            </h3>
-            <p style="font-size: 0.85rem; color: #64748B; margin: 0;">
-                Calculated molecular descriptors, functional group features, and predicted reactive interaction sites.
-            </p>
+    st.markdown("<div style='height: 2rem;'></div>", unsafe_allow_html=True)
+
+    # 2. Mechanistic Framework Evaluation
+    st.markdown("""
+    <div style="margin: 0.5rem 0 1.25rem 0;">
+        <h3 style="font-family: 'Playfair Display', serif; font-size: 1.35rem; font-weight: 700; color: #0F172A; margin-bottom: 0.25rem;">
+            Mechanistic Framework Evaluation
+        </h3>
+        <p style="font-size: 0.85rem; color: #64748B; margin: 0;">
+            Comprehensive kinetic pathways, microenvironmental influences, and thermodynamic justification.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.markdown(f"""
+        <div style="font-size: 0.9rem; color: #334155; line-height: 1.7; white-space: pre-wrap;">
+{res.get('chainOfThought', 'No detailed reasoning chain provided.')}
         </div>
         """, unsafe_allow_html=True)
 
-        for idx, comp in enumerate(res.get("compounds", [])):
-            smi = comp.get("smiles", "")
-            svg_raw = get_mol_svg(smi, width=220, height=220)
+    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.markdown("""
+        <div style="font-size: 0.85rem; color: #475569; line-height: 1.6;">
+            <strong style="color: #0F172A; display: block; margin-bottom: 0.35rem;">
+                Chemical Reaction & Byproduct Analysis:
+            </strong>
+            Products identified with high formation probability or favorable exergonic free energy (ΔG &lt; 0 kcal/mol) represent dominant reaction pathways. In experimental validation, these byproducts should be verified using analytical separation techniques (HPLC, LC-MS, GC-MS, or NMR).
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<div style='height: 2rem;'></div>", unsafe_allow_html=True)
+
+    # 3. Degradation Products and Their Details (Top 5)
+    st.markdown("""
+    <div style="margin: 0.5rem 0 1.25rem 0;">
+        <h3 style="font-family: 'Playfair Display', serif; font-size: 1.35rem; font-weight: 700; color: #0F172A; margin-bottom: 0.25rem;">
+            Degradation Products and Details
+        </h3>
+        <p style="font-size: 0.85rem; color: #64748B; margin: 0;">
+            Ranked strictly by formation probability and thermodynamic stability (Top 5 maximum).
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    impurities = res.get("degradationImpurities", [])
+    sorted_impurities = sorted(impurities, key=lambda x: x.get("probability", 0), reverse=True)[:5]
+
+    if not sorted_impurities:
+        st.info("No significant byproducts detected under standard conditions.")
+    else:
+        for idx, imp in enumerate(sorted_impurities):
+            smi = imp.get("smiles", "")
+            svg_raw = get_mol_svg(smi, width=250, height=250)
             svg_uri = svg_to_data_uri(svg_raw)
-            mw = comp.get("molecularDescriptors", {}).get("MolWt")
-            mw_str = f"MW: {mw:.2f} g/mol" if mw else "MW: N/A"
-            role = "Primary Compound" if idx == 0 else f"Secondary Compound {idx}"
-            role_class = "role-primary" if idx == 0 else "role-secondary"
+            mw = imp.get("molecularDescriptors", {}).get("MolWt")
+            mw_badge = f'<span class="ap1-pill mw">MW: {mw:.2f} g/mol</span>' if mw else ""
 
-            features_pills = "".join([f'<span class="ap1-pill">{f}</span>' for f in comp.get("features", [])])
-            sites_pills = "".join([f'<span class="ap1-pill site">{s}</span>' for s in comp.get("interactionSites", [])])
+            prob = imp.get("probability", 0) * 100
+            h_prob = imp.get("probabilityHeuristic")
+            b_prob = imp.get("probabilityBoltzmann")
+            hb_sub = ""
+            if h_prob is not None and b_prob is not None:
+                hb_sub = f'<div class="ap1-imp-prob-sub">Heuristic: {h_prob*100:.1f}% | Boltzmann: {b_prob*100:.1f}%</div>'
 
-            comp_html = f"""
-            <div class="ap1-comp-card">
-                <div class="ap1-comp-mol">
-                    <span class="ap1-comp-badge">C{idx + 1}</span>
+            dG = imp.get("relativeEnergy")
+            dG_html = f'<div style="font-size: 0.72rem; font-family: monospace; color: #64748B; text-align: right; margin-top: 0.15rem;">ΔG: {dG:.2f} kcal/mol</div>' if dG is not None else ""
+
+            cond = imp.get("condition", "Direct Degradation")
+            cond_class = "cond-hydro"
+            if "oxid" in cond.lower():
+                cond_class = "cond-oxid"
+            elif "therm" in cond.lower():
+                cond_class = "cond-therm"
+            elif "photo" in cond.lower():
+                cond_class = "cond-photo"
+            elif "react" in cond.lower() or "incomp" in cond.lower():
+                cond_class = "cond-react"
+
+            card_html = f"""
+            <div class="ap1-imp-card">
+                <div class="ap1-imp-svg">
+                    <div style="position: absolute; top: 12px; left: 12px; background: #F1F5F9; color: #475569; font-size: 0.7rem; font-weight: 800; padding: 0.2rem 0.6rem; border-radius: 4px; z-index: 2;">
+                        #{idx + 1}
+                    </div>
                     <img src="{svg_uri}" style="width: 100%; height: 100%; object-fit: contain;" />
                 </div>
-                <div class="ap1-comp-info">
-                    <div style="display: flex; align-items: center; margin-bottom: 0.25rem;">
-                        <span class="ap1-comp-name">{comp.get('name', 'Compound')}</span>
-                        <span class="ap1-comp-role {role_class}">{role}</span>
-                    </div>
-                    <div class="ap1-smiles-box" title="{smi}">{smi}</div>
-                    <div class="ap1-tag-group">
-                        <span class="ap1-pill mw">{mw_str}</span>
-                        {features_pills}
-                    </div>
-                    {f'''
-                    <div style="margin-top: 0.85rem;">
-                        <div style="font-size: 0.72rem; font-weight: 700; color: #4F46E5; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;">
-                            Reactive Interaction Centers:
+                <div class="ap1-imp-body">
+                    <div class="ap1-imp-header">
+                        <div>
+                            <div class="ap1-imp-title">{imp.get('iupacName', 'Product')}</div>
+                            <div style="margin-top: 0.35rem;">
+                                {mw_badge}
+                            </div>
                         </div>
-                        <div class="ap1-tag-group">{sites_pills}</div>
+                        <div>
+                            <div class="ap1-imp-prob-val">{prob:.1f}%</div>
+                            {hb_sub}
+                            {dG_html}
+                        </div>
                     </div>
-                    ''' if sites_pills else ''}
+
+                    <div class="ap1-prob-bar-bg">
+                        <div class="ap1-prob-bar-fill" style="width: {min(max(prob, 5.0), 100.0):.1f}%;"></div>
+                    </div>
+
+                    <div class="ap1-imp-desc">
+                        {imp.get('structureDescription', '')}
+                    </div>
+
+                    <div class="ap1-mech-box">
+                        <div class="ap1-mech-title">
+                            <span>Chemical Mechanism:</span>
+                        </div>
+                        <div>{imp.get('mechanismExplanation', '')}</div>
+                    </div>
+
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;">
+                        <span class="ap1-badge-cond {cond_class}">{cond}</span>
+                        <span class="ap1-pill" style="font-weight: 600; color: #4338CA; background: #EEF2FF; border-color: #E0E7FF;">Origin: {imp.get('origin', 'Parent Molecule')}</span>
+                        <span class="ap1-pill" style="font-family: monospace; font-size: 0.65rem; color: #64748B;">{smi}</span>
+                    </div>
                 </div>
             </div>
             """
-            st.markdown(comp_html, unsafe_allow_html=True)
+            st.markdown(card_html, unsafe_allow_html=True)
 
-    # Tab 3: AI Reasoning Framework
-    with tab_reasoning:
-        st.markdown("""
-        <div style="margin: 1rem 0 1.25rem 0;">
-            <h3 style="font-family: 'Playfair Display', serif; font-size: 1.35rem; font-weight: 700; color: #0F172A; margin-bottom: 0.25rem;">
-                AI Mechanistic Reasoning Framework
-            </h3>
-            <p style="font-size: 0.85rem; color: #64748B; margin: 0;">
-                Comprehensive kinetic pathways, microenvironmental influences, and thermodynamic justification.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        with st.container(border=True):
-            st.markdown(f"""
-            <div style="font-size: 0.9rem; color: #334155; line-height: 1.7; white-space: pre-wrap;">
-{res.get('chainOfThought', 'No detailed reasoning chain provided.')}
-            </div>
-            """, unsafe_allow_html=True)
-
-        st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
-
-        # Technical Guidance Box
-        with st.container(border=True):
-            st.markdown("""
-            <div style="font-size: 0.85rem; color: #475569; line-height: 1.6;">
-                <strong style="color: #0F172A; display: block; margin-bottom: 0.35rem;">
-                    Chemical Reaction & Byproduct Analysis:
-                </strong>
-                Products identified with high formation probability or favorable exergonic free energy (ΔG &lt; 0 kcal/mol) represent dominant reaction pathways. In experimental validation, these byproducts should be verified using analytical separation techniques (HPLC, LC-MS, GC-MS, or NMR).
-            </div>
-            """, unsafe_allow_html=True)
-
-    # Bottom Disclaimer
+    # 4. At Last: Disclaimer
     st.markdown("""
     <div style="background: #FAFAFA; border: 1px solid #E2E8F0; border-radius: 8px; padding: 0.75rem 1rem; margin-top: 2rem;">
         <p style="font-size: 0.72rem; color: #94A3B8; font-style: italic; margin: 0;">
